@@ -9,7 +9,7 @@ Set NVD_API_KEY env var to increase rate limit from 5 to 50 requests per 30 seco
 """
 
 import asyncio
-import datetime
+import json
 import os
 import sys
 from pathlib import Path
@@ -27,6 +27,16 @@ from openai import AsyncOpenAI
 from pgvector.asyncpg import register_vector
 
 from config import settings
+from scripts.nvd_utils import (
+    build_content,
+    extract_affected_products,
+    extract_cvss_v2,
+    extract_cvss_v31,
+    extract_cwes,
+    extract_description,
+    extract_reference_urls,
+    parse_date,
+)
 
 NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 BATCH_SIZE = 500
@@ -34,91 +44,6 @@ BATCH_SIZE = 500
 # Rate limiting: 5 req/30s without key, 50 req/30s with key
 NVD_API_KEY = os.getenv("NVD_API_KEY")
 REQUEST_DELAY = 0.7 if NVD_API_KEY else 6.0
-
-
-def extract_cvss_v31(metrics: dict) -> tuple:
-    """Extract CVSS v3.1 score, severity, and vector string."""
-    for entry in metrics.get("cvssMetricV31", []):
-        data = entry.get("cvssData", {})
-        return (
-            data.get("baseScore"),
-            data.get("baseSeverity"),
-            data.get("vectorString"),
-        )
-    return None, None, None
-
-
-def extract_cvss_v2(metrics: dict) -> tuple:
-    """Extract CVSS v2 score and severity."""
-    for entry in metrics.get("cvssMetricV2", []):
-        data = entry.get("cvssData", {})
-        return data.get("baseScore"), entry.get("baseSeverity")
-    return None, None
-
-
-def extract_cwes(weaknesses: list) -> list[str]:
-    """Extract CWE IDs from weaknesses."""
-    cwes = []
-    for weakness in weaknesses:
-        for desc in weakness.get("description", []):
-            if desc.get("lang") == "en":
-                cwes.append(desc["value"])
-    return cwes
-
-
-def extract_affected_products(configurations: list) -> list[str]:
-    """Extract CPE strings from configurations."""
-    products = []
-    for config in configurations:
-        for node in config.get("nodes", []):
-            for match in node.get("cpeMatch", []):
-                if match.get("vulnerable"):
-                    products.append(match.get("criteria", ""))
-    return products
-
-
-def extract_description(descriptions: list) -> str:
-    """Extract English description."""
-    for desc in descriptions:
-        if desc.get("lang") == "en":
-            return desc.get("value", "")
-    return ""
-
-
-def extract_reference_urls(references: list) -> list[str]:
-    """Extract reference URLs."""
-    return [ref.get("url", "") for ref in references[:10]]
-
-
-def parse_date(date_str: str | None) -> datetime.date | None:
-    """Parse ISO-8601 date string to date object."""
-    if not date_str:
-        return None
-    return datetime.datetime.fromisoformat(date_str.replace("Z", "+00:00")).date()
-
-
-def build_content(cve_data: dict) -> str:
-    """Build content string for embedding from NVD CVE data."""
-    description = extract_description(cve_data.get("descriptions", []))
-    metrics = cve_data.get("metrics", {})
-    cvss_score, cvss_severity, cvss_vector = extract_cvss_v31(metrics)
-    cwes = extract_cwes(cve_data.get("weaknesses", []))
-    products = extract_affected_products(cve_data.get("configurations", []))
-
-    parts = [
-        f"CVE ID: {cve_data.get('id', '')}",
-        f"Description: {description}",
-    ]
-    if cvss_score is not None:
-        parts.append(f"CVSS v3.1 Score: {cvss_score} ({cvss_severity})")
-    if cvss_vector:
-        parts.append(f"CVSS Vector: {cvss_vector}")
-    if cwes:
-        parts.append(f"CWEs: {', '.join(cwes)}")
-    if products:
-        parts.append(f"Affected Products: {', '.join(products[:5])}")
-
-    return "\n".join(parts)
 
 
 async def fetch_kev_cve_ids(conn: asyncpg.Connection) -> list[str]:
@@ -204,8 +129,8 @@ async def upsert_records(conn: asyncpg.Connection, cve_records: list[dict], embe
                 cve_id, description, cvss_v31_score, cvss_v31_severity,
                 cvss_v31_vector, cvss_v2_score, cvss_v2_severity,
                 cwes, affected_products, reference_urls,
-                published, last_modified, content, embedding
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+                published, last_modified, raw_json, content, embedding
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
             ON CONFLICT (cve_id) DO UPDATE SET
                 description = EXCLUDED.description,
                 cvss_v31_score = EXCLUDED.cvss_v31_score,
@@ -218,6 +143,7 @@ async def upsert_records(conn: asyncpg.Connection, cve_records: list[dict], embe
                 reference_urls = EXCLUDED.reference_urls,
                 published = EXCLUDED.published,
                 last_modified = EXCLUDED.last_modified,
+                raw_json = EXCLUDED.raw_json,
                 content = EXCLUDED.content,
                 embedding = EXCLUDED.embedding
             """,
@@ -233,6 +159,7 @@ async def upsert_records(conn: asyncpg.Connection, cve_records: list[dict], embe
             extract_reference_urls(cve_data.get("references", [])),
             parse_date(cve_data.get("published")),
             parse_date(cve_data.get("lastModified")),
+            json.dumps(cve_data),
             build_content(cve_data),
             np.array(emb, dtype=np.float32),
         )

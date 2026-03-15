@@ -43,13 +43,23 @@ CREATE TABLE IF NOT EXISTS nvd_vulnerabilities (
     reference_urls TEXT[],
     published DATE,
     last_modified DATE,
+    raw_json JSONB,
     content TEXT NOT NULL,
     embedding vector(1536)
 );
 
+-- Migration: add raw_json to existing tables
+ALTER TABLE nvd_vulnerabilities ADD COLUMN IF NOT EXISTS raw_json JSONB;
+
 CREATE INDEX IF NOT EXISTS nvd_embedding_idx
     ON nvd_vulnerabilities
     USING hnsw (embedding vector_cosine_ops);
+
+CREATE INDEX IF NOT EXISTS nvd_raw_json_gin_idx
+    ON nvd_vulnerabilities USING gin (raw_json jsonb_path_ops);
+
+CREATE INDEX IF NOT EXISTS nvd_vuln_status_idx
+    ON nvd_vulnerabilities ((raw_json->>'vulnStatus'));
 """
 
 
