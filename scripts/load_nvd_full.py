@@ -447,40 +447,62 @@ async def backfill_embeddings(args) -> None:
         await conn.close()
         return
 
+    await conn.close()
+
     processed = 0
     while processed < total:
-        rows = await conn.fetch(
-            """
-            SELECT cve_id, content FROM nvd_vulnerabilities
-            WHERE embedding IS NULL
-            ORDER BY cve_id
-            LIMIT $1
-            """,
-            EMBEDDING_BATCH_SIZE,
-        )
+        for attempt in range(3):
+            try:
+                conn = await asyncpg.connect(dsn=dsn)
+                await register_vector(conn)
 
-        if not rows:
-            break
+                rows = await conn.fetch(
+                    """
+                    SELECT cve_id, content FROM nvd_vulnerabilities
+                    WHERE embedding IS NULL
+                    ORDER BY cve_id
+                    LIMIT $1
+                    """,
+                    EMBEDDING_BATCH_SIZE,
+                )
 
-        texts = [row["content"] for row in rows]
-        cve_ids = [row["cve_id"] for row in rows]
+                if not rows:
+                    await conn.close()
+                    processed = total
+                    break
 
-        resp = await openai_client.embeddings.create(
-            model=settings.embedding_model, input=texts
-        )
-        embeddings = [item.embedding for item in resp.data]
+                texts = [row["content"] for row in rows]
+                cve_ids = [row["cve_id"] for row in rows]
 
-        for cve_id, emb in zip(cve_ids, embeddings):
-            await conn.execute(
-                "UPDATE nvd_vulnerabilities SET embedding = $1 WHERE cve_id = $2",
-                np.array(emb, dtype=np.float32),
-                cve_id,
-            )
+                resp = await openai_client.embeddings.create(
+                    model=settings.embedding_model, input=texts
+                )
+                embeddings = [item.embedding for item in resp.data]
 
-        processed += len(rows)
-        print(f"  Backfilled {processed}/{total}")
+                update_rows = [
+                    (np.array(emb, dtype=np.float32), cve_id)
+                    for cve_id, emb in zip(cve_ids, embeddings)
+                ]
+                await conn.executemany(
+                    "UPDATE nvd_vulnerabilities SET embedding = $1 WHERE cve_id = $2",
+                    update_rows,
+                )
 
-    await conn.close()
+                await conn.close()
+                processed += len(rows)
+                print(f"  Backfilled {processed}/{total}")
+                break
+            except (ConnectionResetError, OSError, asyncpg.ConnectionDoesNotExistError) as e:
+                try:
+                    await conn.close()
+                except Exception:
+                    pass
+                if attempt < 2:
+                    print(f"  Connection error: {e}, retrying in 5s...")
+                    await asyncio.sleep(5)
+                else:
+                    raise
+
     print(f"Done! Backfilled embeddings for {processed} records")
 
 
