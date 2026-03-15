@@ -545,11 +545,14 @@ async def main() -> None:
     rate_info = "with API key (50 req/30s)" if NVD_API_KEY else "without API key (5 req/30s)"
     print(f"NVD Full ETL | Rate limiting: {rate_info}")
 
+    print("Connecting to database...")
     dsn = settings.get_database_dsn()
     conn = await asyncpg.connect(dsn=dsn, timeout=DB_CONNECT_TIMEOUT)
+    print("Connected. Ensuring schema...")
     from rag.database import SCHEMA_SQL
     await conn.execute(SCHEMA_SQL)
     await conn.close()
+    print("Schema verified.")
 
     if args.backfill_embeddings:
         await backfill_embeddings()
