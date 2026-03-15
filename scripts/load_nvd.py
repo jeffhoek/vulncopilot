@@ -36,6 +36,11 @@ NVD_API_KEY = os.getenv("NVD_API_KEY")
 REQUEST_DELAY = 0.7 if NVD_API_KEY else 6.0
 
 
+# ---------------------------------------------------------------------------
+# NVD response parsing helpers
+# ---------------------------------------------------------------------------
+
+
 def extract_cvss_v31(metrics: dict) -> tuple:
     """Extract CVSS v3.1 score, severity, and vector string."""
     for entry in metrics.get("cvssMetricV31", []):
@@ -121,10 +126,51 @@ def build_content(cve_data: dict) -> str:
     return "\n".join(parts)
 
 
+# ---------------------------------------------------------------------------
+# Database helpers
+# ---------------------------------------------------------------------------
+
+
+async def init_database(dsn: str) -> asyncpg.Connection:
+    """Connect to PostgreSQL and ensure the schema exists.
+
+    Returns an open connection with pgvector registered.
+    """
+    conn = await asyncpg.connect(dsn=dsn)
+    from rag.database import SCHEMA_SQL
+
+    await conn.execute(SCHEMA_SQL)
+    await register_vector(conn)
+    return conn
+
+
 async def fetch_kev_cve_ids(conn: asyncpg.Connection) -> list[str]:
     """Get all CVE IDs from the KEV table."""
     rows = await conn.fetch("SELECT cve_id FROM kev_vulnerabilities ORDER BY cve_id")
     return [row["cve_id"] for row in rows]
+
+
+async def find_new_cve_ids(conn: asyncpg.Connection) -> list[str]:
+    """Return KEV CVE IDs that are not yet in the nvd_vulnerabilities table.
+
+    This lets the script resume where it left off if interrupted.
+    """
+    cve_ids = await fetch_kev_cve_ids(conn)
+    if not cve_ids:
+        print("No KEV records found. Run load_kev.py first.")
+        return []
+    print(f"Found {len(cve_ids)} CVE IDs in KEV table")
+
+    existing = await conn.fetch("SELECT cve_id FROM nvd_vulnerabilities")
+    existing_ids = {row["cve_id"] for row in existing}
+    new_ids = [cve_id for cve_id in cve_ids if cve_id not in existing_ids]
+    print(f"  {len(existing_ids)} already loaded, {len(new_ids)} new to fetch")
+    return new_ids
+
+
+# ---------------------------------------------------------------------------
+# NVD API fetching
+# ---------------------------------------------------------------------------
 
 
 async def fetch_nvd_cve(client: httpx.AsyncClient, cve_id: str) -> dict | None:
@@ -145,32 +191,46 @@ async def fetch_nvd_cve(client: httpx.AsyncClient, cve_id: str) -> dict | None:
     return vulns[0].get("cve")
 
 
-async def fetch_nvd_batch(client: httpx.AsyncClient, cve_ids: list[str], offset: int, total: int) -> tuple[list[dict], int]:
-    """Fetch a batch of CVEs from the NVD API. Returns (records, skipped)."""
+async def fetch_nvd_cve_with_retry(
+    client: httpx.AsyncClient, cve_id: str
+) -> dict | None:
+    """Fetch a single CVE, retrying once on 403 (rate limit)."""
+    try:
+        return await fetch_nvd_cve(client, cve_id)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 403:
+            print(f"  Rate limited at {cve_id}, waiting 30s...")
+            await asyncio.sleep(30)
+            return await fetch_nvd_cve(client, cve_id)
+        raise
+
+
+async def fetch_nvd_batch(
+    client: httpx.AsyncClient,
+    cve_ids: list[str],
+    offset: int,
+    total: int,
+) -> tuple[list[dict], int]:
+    """Fetch a batch of CVEs from the NVD API.
+
+    Returns (records, skipped_count).  Respects the global REQUEST_DELAY
+    between calls and retries once on rate-limit (403).
+    """
     results = []
     skipped = 0
 
     for i, cve_id in enumerate(cve_ids):
         try:
-            cve_data = await fetch_nvd_cve(client, cve_id)
+            cve_data = await fetch_nvd_cve_with_retry(client, cve_id)
             if cve_data:
                 results.append(cve_data)
             else:
-                skipped += 1
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 403:
-                print(f"  Rate limited at {cve_id}, waiting 30s...")
-                await asyncio.sleep(30)
-                cve_data = await fetch_nvd_cve(client, cve_id)
-                if cve_data:
-                    results.append(cve_data)
-            else:
-                print(f"  Error fetching {cve_id}: {e}")
                 skipped += 1
         except Exception as e:
             print(f"  Error fetching {cve_id}: {e}")
             skipped += 1
 
+        # Progress reporting every 50 CVEs
         absolute = offset + i + 1
         if absolute % 50 == 0:
             print(f"  Fetched {absolute}/{total}")
@@ -180,133 +240,186 @@ async def fetch_nvd_batch(client: httpx.AsyncClient, cve_ids: list[str], offset:
     return results, skipped
 
 
-async def generate_embeddings(openai_client: AsyncOpenAI, texts: list[str]) -> list[list[float]]:
-    """Generate embeddings in batches."""
+# ---------------------------------------------------------------------------
+# Embedding generation
+# ---------------------------------------------------------------------------
+
+
+async def generate_embeddings(
+    openai_client: AsyncOpenAI, texts: list[str]
+) -> list[list[float]]:
+    """Generate embeddings in batches of BATCH_SIZE via the OpenAI API."""
     all_embeddings = []
     for i in range(0, len(texts), BATCH_SIZE):
         batch = texts[i : i + BATCH_SIZE]
-        resp = await openai_client.embeddings.create(model=settings.embedding_model, input=batch)
+        resp = await openai_client.embeddings.create(
+            model=settings.embedding_model, input=batch
+        )
         all_embeddings.extend([item.embedding for item in resp.data])
         print(f"  Embedded {min(i + BATCH_SIZE, len(texts))}/{len(texts)}")
     return all_embeddings
 
 
-async def upsert_records(conn: asyncpg.Connection, cve_records: list[dict], embeddings: list[list[float]]) -> None:
-    """Upsert NVD records into PostgreSQL."""
-    for i, (cve_data, emb) in enumerate(zip(cve_records, embeddings)):
-        metrics = cve_data.get("metrics", {})
-        cvss_v31_score, cvss_v31_severity, cvss_v31_vector = extract_cvss_v31(metrics)
-        cvss_v2_score, cvss_v2_severity = extract_cvss_v2(metrics)
+# ---------------------------------------------------------------------------
+# Upserting records into PostgreSQL
+# ---------------------------------------------------------------------------
 
-        await conn.execute(
-            """
-            INSERT INTO nvd_vulnerabilities (
-                cve_id, description, cvss_v31_score, cvss_v31_severity,
-                cvss_v31_vector, cvss_v2_score, cvss_v2_severity,
-                cwes, affected_products, reference_urls,
-                published, last_modified, content, embedding
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-            ON CONFLICT (cve_id) DO UPDATE SET
-                description = EXCLUDED.description,
-                cvss_v31_score = EXCLUDED.cvss_v31_score,
-                cvss_v31_severity = EXCLUDED.cvss_v31_severity,
-                cvss_v31_vector = EXCLUDED.cvss_v31_vector,
-                cvss_v2_score = EXCLUDED.cvss_v2_score,
-                cvss_v2_severity = EXCLUDED.cvss_v2_severity,
-                cwes = EXCLUDED.cwes,
-                affected_products = EXCLUDED.affected_products,
-                reference_urls = EXCLUDED.reference_urls,
-                published = EXCLUDED.published,
-                last_modified = EXCLUDED.last_modified,
-                content = EXCLUDED.content,
-                embedding = EXCLUDED.embedding
-            """,
-            cve_data.get("id"),
-            extract_description(cve_data.get("descriptions", [])),
-            cvss_v31_score,
-            cvss_v31_severity,
-            cvss_v31_vector,
-            cvss_v2_score,
-            cvss_v2_severity,
-            extract_cwes(cve_data.get("weaknesses", [])),
-            extract_affected_products(cve_data.get("configurations", [])),
-            extract_reference_urls(cve_data.get("references", [])),
-            parse_date(cve_data.get("published")),
-            parse_date(cve_data.get("lastModified")),
-            build_content(cve_data),
-            np.array(emb, dtype=np.float32),
-        )
+
+def build_upsert_params(cve_data: dict, embedding: list[float]) -> tuple:
+    """Build the parameter tuple for the NVD upsert query."""
+    metrics = cve_data.get("metrics", {})
+    cvss_v31_score, cvss_v31_severity, cvss_v31_vector = extract_cvss_v31(metrics)
+    cvss_v2_score, cvss_v2_severity = extract_cvss_v2(metrics)
+
+    return (
+        cve_data.get("id"),
+        extract_description(cve_data.get("descriptions", [])),
+        cvss_v31_score,
+        cvss_v31_severity,
+        cvss_v31_vector,
+        cvss_v2_score,
+        cvss_v2_severity,
+        extract_cwes(cve_data.get("weaknesses", [])),
+        extract_affected_products(cve_data.get("configurations", [])),
+        extract_reference_urls(cve_data.get("references", [])),
+        parse_date(cve_data.get("published")),
+        parse_date(cve_data.get("lastModified")),
+        build_content(cve_data),
+        np.array(embedding, dtype=np.float32),
+    )
+
+
+UPSERT_SQL = """
+    INSERT INTO nvd_vulnerabilities (
+        cve_id, description, cvss_v31_score, cvss_v31_severity,
+        cvss_v31_vector, cvss_v2_score, cvss_v2_severity,
+        cwes, affected_products, reference_urls,
+        published, last_modified, content, embedding
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+    ON CONFLICT (cve_id) DO UPDATE SET
+        description = EXCLUDED.description,
+        cvss_v31_score = EXCLUDED.cvss_v31_score,
+        cvss_v31_severity = EXCLUDED.cvss_v31_severity,
+        cvss_v31_vector = EXCLUDED.cvss_v31_vector,
+        cvss_v2_score = EXCLUDED.cvss_v2_score,
+        cvss_v2_severity = EXCLUDED.cvss_v2_severity,
+        cwes = EXCLUDED.cwes,
+        affected_products = EXCLUDED.affected_products,
+        reference_urls = EXCLUDED.reference_urls,
+        published = EXCLUDED.published,
+        last_modified = EXCLUDED.last_modified,
+        content = EXCLUDED.content,
+        embedding = EXCLUDED.embedding
+"""
+
+
+async def upsert_records(
+    conn: asyncpg.Connection,
+    cve_records: list[dict],
+    embeddings: list[list[float]],
+) -> None:
+    """Upsert NVD records into PostgreSQL one at a time."""
+    for i, (cve_data, emb) in enumerate(zip(cve_records, embeddings)):
+        params = build_upsert_params(cve_data, emb)
+        await conn.execute(UPSERT_SQL, *params)
         if (i + 1) % 500 == 0:
             print(f"  Upserted {i + 1}/{len(cve_records)}")
 
     print(f"  Upserted {len(cve_records)}/{len(cve_records)} total")
 
 
+# ---------------------------------------------------------------------------
+# Per-batch pipeline: fetch → embed → upsert
+# ---------------------------------------------------------------------------
+
+
+async def process_batch(
+    client: httpx.AsyncClient,
+    openai_client: AsyncOpenAI,
+    dsn: str,
+    batch_ids: list[str],
+    batch_num: int,
+    total_batches: int,
+    batch_offset: int,
+    total_ids: int,
+) -> tuple[int, int]:
+    """Run the full fetch → embed → upsert pipeline for one batch.
+
+    Opens a fresh DB connection for the upsert step to avoid idle timeouts
+    that occur when the NVD fetch phase takes a long time.
+
+    Returns (loaded_count, skipped_count).
+    """
+    print(f"Batch {batch_num}/{total_batches}: fetching {len(batch_ids)} CVEs...")
+
+    # Step 1: Fetch CVE data from the NVD API
+    cve_records, skipped = await fetch_nvd_batch(
+        client, batch_ids, batch_offset, total_ids
+    )
+    if not cve_records:
+        print(f"  No records in batch {batch_num}, skipping embed/upsert.")
+        return 0, skipped
+
+    # Step 2: Generate embeddings for the fetched records
+    contents = [build_content(cve) for cve in cve_records]
+    print(f"  Generating embeddings for {len(cve_records)} records...")
+    embeddings = await generate_embeddings(openai_client, contents)
+
+    # Step 3: Upsert into PostgreSQL (fresh connection to avoid idle timeout)
+    print(f"  Upserting {len(cve_records)} records...")
+    conn = await asyncpg.connect(dsn=dsn)
+    await register_vector(conn)
+    try:
+        await upsert_records(conn, cve_records, embeddings)
+    finally:
+        await conn.close()
+
+    return len(cve_records), skipped
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
+
 async def main() -> None:
     print("Starting NVD ETL (scoped to KEV CVEs)...")
-    rate_info = "with API key (50 req/30s)" if NVD_API_KEY else "without API key (5 req/30s)"
+    rate_info = (
+        "with API key (50 req/30s)" if NVD_API_KEY else "without API key (5 req/30s)"
+    )
     print(f"  Rate limiting: {rate_info}")
 
-    # Connect to database for initial setup and ID queries, then close.
-    # Connection is reopened per batch to avoid idle timeout on long fetches.
+    # Initialize database schema and discover which CVEs still need fetching
     print("Connecting to PostgreSQL...")
     dsn = settings.get_database_dsn()
-    conn = await asyncpg.connect(dsn=dsn)
-    from rag.database import SCHEMA_SQL
-    await conn.execute(SCHEMA_SQL)
-    await register_vector(conn)
-
-    # Get CVE IDs from KEV table
-    cve_ids = await fetch_kev_cve_ids(conn)
-    if not cve_ids:
-        print("No KEV records found. Run load_kev.py first.")
-        await conn.close()
-        return
-    print(f"Found {len(cve_ids)} CVE IDs in KEV table")
-
-    # Check which CVE IDs already exist in NVD table
-    existing = await conn.fetch("SELECT cve_id FROM nvd_vulnerabilities")
-    existing_ids = {row["cve_id"] for row in existing}
-    new_ids = [cve_id for cve_id in cve_ids if cve_id not in existing_ids]
-    print(f"  {len(existing_ids)} already loaded, {len(new_ids)} new to fetch")
+    conn = await init_database(dsn)
+    new_ids = await find_new_cve_ids(conn)
     await conn.close()
 
     if not new_ids:
         print("All NVD records already loaded. Nothing to do.")
         return
 
-    # Process in batches: fetch → embed → upsert, then move to next batch.
-    # A fresh DB connection is opened for each upsert to avoid idle timeout.
+    # Process in batches: fetch → embed → upsert, then move to next batch
     print(f"Fetching {len(new_ids)} CVEs from NVD API (batch size: {BATCH_SIZE})...")
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
     total_loaded = 0
     total_skipped = 0
 
     async with httpx.AsyncClient(timeout=30) as client:
+        total_batches = (len(new_ids) + BATCH_SIZE - 1) // BATCH_SIZE
         for batch_start in range(0, len(new_ids), BATCH_SIZE):
             batch_ids = new_ids[batch_start : batch_start + BATCH_SIZE]
             batch_num = batch_start // BATCH_SIZE + 1
-            total_batches = (len(new_ids) + BATCH_SIZE - 1) // BATCH_SIZE
-            print(f"Batch {batch_num}/{total_batches}: fetching {len(batch_ids)} CVEs...")
 
-            cve_records, skipped = await fetch_nvd_batch(client, batch_ids, batch_start, len(new_ids))
+            loaded, skipped = await process_batch(
+                client, openai_client, dsn, batch_ids,
+                batch_num, total_batches, batch_start, len(new_ids),
+            )
+            total_loaded += loaded
             total_skipped += skipped
-
-            if not cve_records:
-                print(f"  No records in batch {batch_num}, skipping embed/upsert.")
-                continue
-
-            contents = [build_content(cve) for cve in cve_records]
-            print(f"  Generating embeddings for {len(cve_records)} records...")
-            embeddings = await generate_embeddings(openai_client, contents)
-
-            print(f"  Upserting {len(cve_records)} records...")
-            conn = await asyncpg.connect(dsn=dsn)
-            await register_vector(conn)
-            await upsert_records(conn, cve_records, embeddings)
-            await conn.close()
-            total_loaded += len(cve_records)
-            print(f"  Batch {batch_num} complete. Total loaded so far: {total_loaded}")
+            if loaded:
+                print(f"  Batch {batch_num} complete. Total loaded so far: {total_loaded}")
 
     print(f"Done! Loaded {total_loaded} NVD records ({total_skipped} skipped).")
 
