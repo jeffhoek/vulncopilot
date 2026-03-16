@@ -49,10 +49,75 @@ NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 RESULTS_PER_PAGE = 2000
 EMBEDDING_BATCH_SIZE = 500
 CHECKPOINT_FILE = Path(__file__).resolve().parent.parent / "data" / "nvd_checkpoint.json"
+DB_RETRY_EXCEPTIONS = (ConnectionResetError, OSError, asyncpg.ConnectionDoesNotExistError, asyncio.TimeoutError)
+DB_CONNECT_TIMEOUT = 10
+MAX_RETRIES = 3
 
 # Rate limiting: 5 req/30s without key, 50 req/30s with key
 NVD_API_KEY = os.getenv("NVD_API_KEY")
 REQUEST_DELAY = 0.7 if NVD_API_KEY else 6.0
+
+STAGING_COLUMNS = [
+    "cve_id", "description", "cvss_v31_score", "cvss_v31_severity",
+    "cvss_v31_vector", "cvss_v2_score", "cvss_v2_severity",
+    "cwes", "affected_products", "reference_urls",
+    "published", "last_modified", "raw_json", "content", "embedding",
+]
+
+CREATE_STAGING_SQL = """
+    CREATE TEMP TABLE _nvd_staging (
+        cve_id VARCHAR(20),
+        description TEXT,
+        cvss_v31_score NUMERIC(3,1),
+        cvss_v31_severity VARCHAR(10),
+        cvss_v31_vector TEXT,
+        cvss_v2_score NUMERIC(3,1),
+        cvss_v2_severity VARCHAR(10),
+        cwes TEXT[],
+        affected_products TEXT[],
+        reference_urls TEXT[],
+        published DATE,
+        last_modified DATE,
+        raw_json JSONB,
+        content TEXT,
+        embedding vector(1536)
+    ) ON COMMIT DROP
+"""
+
+UPSERT_FROM_STAGING_SQL = """
+    INSERT INTO nvd_vulnerabilities (
+        cve_id, description, cvss_v31_score, cvss_v31_severity,
+        cvss_v31_vector, cvss_v2_score, cvss_v2_severity,
+        cwes, affected_products, reference_urls,
+        published, last_modified, raw_json, content, embedding
+    )
+    SELECT
+        cve_id, description, cvss_v31_score, cvss_v31_severity,
+        cvss_v31_vector, cvss_v2_score, cvss_v2_severity,
+        cwes, affected_products, reference_urls,
+        published, last_modified, raw_json, content, embedding
+    FROM _nvd_staging
+    ON CONFLICT (cve_id) DO UPDATE SET
+        description = EXCLUDED.description,
+        cvss_v31_score = EXCLUDED.cvss_v31_score,
+        cvss_v31_severity = EXCLUDED.cvss_v31_severity,
+        cvss_v31_vector = EXCLUDED.cvss_v31_vector,
+        cvss_v2_score = EXCLUDED.cvss_v2_score,
+        cvss_v2_severity = EXCLUDED.cvss_v2_severity,
+        cwes = EXCLUDED.cwes,
+        affected_products = EXCLUDED.affected_products,
+        reference_urls = EXCLUDED.reference_urls,
+        published = EXCLUDED.published,
+        last_modified = EXCLUDED.last_modified,
+        raw_json = EXCLUDED.raw_json,
+        content = EXCLUDED.content,
+        embedding = COALESCE(EXCLUDED.embedding, nvd_vulnerabilities.embedding)
+"""
+
+
+def format_elapsed(started_at: float) -> str:
+    elapsed = time.time() - started_at
+    return f"{int(elapsed // 60)}m{int(elapsed % 60):02d}s"
 
 
 # -- Checkpoint --
@@ -97,29 +162,29 @@ async def fetch_nvd_page(
     if NVD_API_KEY:
         headers["apiKey"] = NVD_API_KEY
 
-    for attempt in range(3):
+    for attempt in range(MAX_RETRIES):
         try:
             resp = await session.get(NVD_API_URL, params=params, headers=headers)
             if resp.status_code == 403:
-                print(f"  Rate limited, waiting 30s (attempt {attempt + 1}/3)...")
+                print(f"  Rate limited, waiting 30s (attempt {attempt + 1}/{MAX_RETRIES})...")
                 await asyncio.sleep(30)
                 continue
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPStatusError as e:
-            if attempt < 2:
+            if attempt < MAX_RETRIES - 1:
                 print(f"  HTTP {e.response.status_code}, retrying in 10s...")
                 await asyncio.sleep(10)
             else:
                 raise
-        except (httpx.ReadTimeout, httpx.ConnectTimeout) as e:
-            if attempt < 2:
+        except (httpx.ReadTimeout, httpx.ConnectTimeout):
+            if attempt < MAX_RETRIES - 1:
                 print(f"  Timeout, retrying in 10s...")
                 await asyncio.sleep(10)
             else:
                 raise
 
-    raise RuntimeError("Failed to fetch NVD page after 3 attempts")
+    raise RuntimeError(f"Failed to fetch NVD page after {MAX_RETRIES} attempts")
 
 
 def parse_cve_records(vulnerabilities: list[dict]) -> list[dict]:
@@ -162,71 +227,30 @@ async def upsert_batch(conn: asyncpg.Connection, cve_records: list[dict], embedd
         for i, cve in enumerate(cve_records)
     ]
 
-    # Use a temp table for fast COPY, then merge into the main table
     async with conn.transaction():
         await conn.execute("DROP TABLE IF EXISTS _nvd_staging")
-        await conn.execute("""
-            CREATE TEMP TABLE _nvd_staging (
-                cve_id VARCHAR(20),
-                description TEXT,
-                cvss_v31_score NUMERIC(3,1),
-                cvss_v31_severity VARCHAR(10),
-                cvss_v31_vector TEXT,
-                cvss_v2_score NUMERIC(3,1),
-                cvss_v2_severity VARCHAR(10),
-                cwes TEXT[],
-                affected_products TEXT[],
-                reference_urls TEXT[],
-                published DATE,
-                last_modified DATE,
-                raw_json JSONB,
-                content TEXT,
-                embedding vector(1536)
-            ) ON COMMIT DROP
-        """)
-
-        # Bulk copy into staging
+        await conn.execute(CREATE_STAGING_SQL)
         await conn.copy_records_to_table(
-            "_nvd_staging",
-            records=rows,
-            columns=[
-                "cve_id", "description", "cvss_v31_score", "cvss_v31_severity",
-                "cvss_v31_vector", "cvss_v2_score", "cvss_v2_severity",
-                "cwes", "affected_products", "reference_urls",
-                "published", "last_modified", "raw_json", "content", "embedding",
-            ],
+            "_nvd_staging", records=rows, columns=STAGING_COLUMNS,
         )
+        await conn.execute(UPSERT_FROM_STAGING_SQL)
 
-        # Merge from staging into main table
-        await conn.execute("""
-            INSERT INTO nvd_vulnerabilities (
-                cve_id, description, cvss_v31_score, cvss_v31_severity,
-                cvss_v31_vector, cvss_v2_score, cvss_v2_severity,
-                cwes, affected_products, reference_urls,
-                published, last_modified, raw_json, content, embedding
-            )
-            SELECT
-                cve_id, description, cvss_v31_score, cvss_v31_severity,
-                cvss_v31_vector, cvss_v2_score, cvss_v2_severity,
-                cwes, affected_products, reference_urls,
-                published, last_modified, raw_json, content, embedding
-            FROM _nvd_staging
-            ON CONFLICT (cve_id) DO UPDATE SET
-                description = EXCLUDED.description,
-                cvss_v31_score = EXCLUDED.cvss_v31_score,
-                cvss_v31_severity = EXCLUDED.cvss_v31_severity,
-                cvss_v31_vector = EXCLUDED.cvss_v31_vector,
-                cvss_v2_score = EXCLUDED.cvss_v2_score,
-                cvss_v2_severity = EXCLUDED.cvss_v2_severity,
-                cwes = EXCLUDED.cwes,
-                affected_products = EXCLUDED.affected_products,
-                reference_urls = EXCLUDED.reference_urls,
-                published = EXCLUDED.published,
-                last_modified = EXCLUDED.last_modified,
-                raw_json = EXCLUDED.raw_json,
-                content = EXCLUDED.content,
-                embedding = COALESCE(EXCLUDED.embedding, nvd_vulnerabilities.embedding)
-        """)
+
+async def upsert_with_retry(dsn: str, cve_records: list[dict], embeddings: list[list[float]] | None) -> None:
+    """Connect, upsert a batch, and retry on transient connection errors."""
+    for attempt in range(MAX_RETRIES):
+        try:
+            conn = await asyncpg.connect(dsn=dsn, timeout=DB_CONNECT_TIMEOUT)
+            await register_vector(conn)
+            await upsert_batch(conn, cve_records, embeddings)
+            await conn.close()
+            return
+        except DB_RETRY_EXCEPTIONS as e:
+            if attempt < MAX_RETRIES - 1:
+                print(f"  DB connection error: {e}, retrying in 5s...")
+                await asyncio.sleep(5)
+            else:
+                raise
 
 
 # -- Embeddings --
@@ -242,22 +266,29 @@ async def generate_embeddings(openai_client: AsyncOpenAI, texts: list[str]) -> l
     return all_embeddings
 
 
-# -- Main modes --
+async def embed_and_upsert(
+    dsn: str,
+    cve_records: list[dict],
+    openai_client: AsyncOpenAI | None,
+) -> int:
+    """Generate embeddings (if client provided) and upsert records. Returns count loaded."""
+    embeddings = None
+    if openai_client and cve_records:
+        contents = [build_content(cve) for cve in cve_records]
+        print(f"  Generating embeddings for {len(cve_records)} records...")
+        embeddings = await generate_embeddings(openai_client, contents)
 
-async def full_load(args) -> None:
-    """Fetch all CVEs from NVD API using pagination."""
+    print(f"  Upserting {len(cve_records)} records...")
+    await upsert_with_retry(dsn, cve_records, embeddings)
+    return len(cve_records)
+
+
+# -- Full load --
+
+async def _get_total_results(start_index: int) -> tuple[dict, int, int]:
+    """Fetch the first page and return (page_data, total_results, total_pages)."""
     import httpx
 
-    dsn = settings.get_database_dsn()
-
-    # Check for existing checkpoint
-    checkpoint = load_checkpoint()
-    start_index = 0
-    if checkpoint and checkpoint.get("mode") == "full":
-        start_index = checkpoint["start_index"]
-        print(f"Resuming from checkpoint at index {start_index}")
-
-    # First request to get total count
     print("Fetching first page to determine total CVE count...")
     async with httpx.AsyncClient(timeout=60) as session:
         first_page = await fetch_nvd_page(session, start_index)
@@ -265,6 +296,45 @@ async def full_load(args) -> None:
     total_results = first_page.get("totalResults", 0)
     total_pages = (total_results + RESULTS_PER_PAGE - 1) // RESULTS_PER_PAGE
     print(f"Total CVEs in NVD: {total_results} ({total_pages} pages)")
+    return first_page, total_results, total_pages
+
+
+async def _process_full_load_page(
+    session,
+    current_index: int,
+    first_page: dict | None,
+    openai_client: AsyncOpenAI | None,
+    dsn: str,
+) -> int:
+    """Fetch one page, embed, and upsert. Returns number of records loaded."""
+    if first_page is not None:
+        data = first_page
+    else:
+        data = await fetch_nvd_page(session, current_index)
+        await asyncio.sleep(REQUEST_DELAY)
+
+    vulnerabilities = data.get("vulnerabilities", [])
+    if not vulnerabilities:
+        print("  No vulnerabilities in response, advancing...")
+        return 0
+
+    cve_records = parse_cve_records(vulnerabilities)
+    return await embed_and_upsert(dsn, cve_records, openai_client)
+
+
+async def full_load(args) -> None:
+    """Fetch all CVEs from NVD API using pagination."""
+    import httpx
+
+    dsn = settings.get_database_dsn()
+
+    checkpoint = load_checkpoint()
+    start_index = 0
+    if checkpoint and checkpoint.get("mode") == "full":
+        start_index = checkpoint["start_index"]
+        print(f"Resuming from checkpoint at index {start_index}")
+
+    first_page, total_results, total_pages = await _get_total_results(start_index)
 
     openai_client = None
     if not args.skip_embeddings:
@@ -272,65 +342,26 @@ async def full_load(args) -> None:
 
     started_at = time.time()
     total_loaded = 0
+    current_index = start_index
+    page_num = current_index // RESULTS_PER_PAGE + 1
 
     async with httpx.AsyncClient(timeout=60) as session:
-        current_index = start_index
-        page_num = current_index // RESULTS_PER_PAGE + 1
-
         while current_index < total_results:
             if args.limit and page_num > args.limit + (start_index // RESULTS_PER_PAGE):
                 print(f"Reached page limit ({args.limit}), stopping.")
                 break
 
-            elapsed = time.time() - started_at
-            elapsed_str = f"{int(elapsed // 60)}m{int(elapsed % 60):02d}s"
+            print(f"Page {page_num}/{total_pages} | index {current_index}/{total_results} | elapsed: {format_elapsed(started_at)}")
 
-            print(f"Page {page_num}/{total_pages} | index {current_index}/{total_results} | elapsed: {elapsed_str}")
+            use_first_page = first_page if current_index == start_index else None
+            loaded = await _process_full_load_page(
+                session, current_index, use_first_page, openai_client, dsn,
+            )
 
-            # Fetch (reuse first page if resuming from 0)
-            if current_index == start_index and 'first_page' in dir():
-                data = first_page
-            else:
-                data = await fetch_nvd_page(session, current_index)
-                await asyncio.sleep(REQUEST_DELAY)
-
-            vulnerabilities = data.get("vulnerabilities", [])
-            if not vulnerabilities:
-                print("  No vulnerabilities in response, advancing...")
-                current_index += RESULTS_PER_PAGE
-                page_num += 1
-                continue
-
-            cve_records = parse_cve_records(vulnerabilities)
-
-            # Generate embeddings
-            embeddings = None
-            if openai_client and cve_records:
-                contents = [build_content(cve) for cve in cve_records]
-                print(f"  Generating embeddings for {len(cve_records)} records...")
-                embeddings = await generate_embeddings(openai_client, contents)
-
-            # Upsert to database (with retry on connection errors)
-            print(f"  Upserting {len(cve_records)} records...")
-            for db_attempt in range(3):
-                try:
-                    conn = await asyncpg.connect(dsn=dsn)
-                    await register_vector(conn)
-                    await upsert_batch(conn, cve_records, embeddings)
-                    await conn.close()
-                    break
-                except (ConnectionResetError, OSError, asyncpg.ConnectionDoesNotExistError) as e:
-                    if db_attempt < 2:
-                        print(f"  DB connection error: {e}, retrying in 5s...")
-                        await asyncio.sleep(5)
-                    else:
-                        raise
-
-            total_loaded += len(cve_records)
+            total_loaded += loaded
             current_index += RESULTS_PER_PAGE
             page_num += 1
 
-            # Save checkpoint
             save_checkpoint({
                 "mode": "full",
                 "start_index": current_index,
@@ -339,8 +370,46 @@ async def full_load(args) -> None:
             })
 
     clear_checkpoint()
-    elapsed = time.time() - started_at
-    print(f"Done! Loaded {total_loaded} CVEs in {int(elapsed // 60)}m{int(elapsed % 60):02d}s")
+    print(f"Done! Loaded {total_loaded} CVEs in {format_elapsed(started_at)}")
+
+
+# -- Incremental sync --
+
+async def _sync_window(
+    session,
+    start_str: str,
+    end_str: str,
+    openai_client: AsyncOpenAI | None,
+    dsn: str,
+) -> int:
+    """Paginate through one 120-day window, returning total records synced."""
+    loaded = 0
+    current_index = 0
+
+    while True:
+        data = await fetch_nvd_page(
+            session, current_index,
+            last_mod_start=start_str,
+            last_mod_end=end_str,
+        )
+        await asyncio.sleep(REQUEST_DELAY)
+
+        total_in_window = data.get("totalResults", 0)
+        if current_index == 0:
+            print(f"  {total_in_window} modified CVEs in this window")
+
+        vulnerabilities = data.get("vulnerabilities", [])
+        if not vulnerabilities:
+            break
+
+        cve_records = parse_cve_records(vulnerabilities)
+        loaded += await embed_and_upsert(dsn, cve_records, openai_client)
+        current_index += RESULTS_PER_PAGE
+
+        if current_index >= total_in_window:
+            break
+
+    return loaded
 
 
 async def incremental_sync(args) -> None:
@@ -348,9 +417,7 @@ async def incremental_sync(args) -> None:
     import httpx
 
     dsn = settings.get_database_dsn()
-    conn = await asyncpg.connect(dsn=dsn)
-
-    # Get high-water mark
+    conn = await asyncpg.connect(dsn=dsn, timeout=DB_CONNECT_TIMEOUT)
     row = await conn.fetchrow("SELECT MAX(last_modified) as max_date FROM nvd_vulnerabilities")
     await conn.close()
 
@@ -368,9 +435,8 @@ async def incremental_sync(args) -> None:
 
     total_loaded = 0
     started_at = time.time()
-
-    # NVD API requires date ranges <= 120 days
     window_start = high_water
+
     async with httpx.AsyncClient(timeout=60) as session:
         while window_start < now:
             window_end = min(window_start + timedelta(days=120), now)
@@ -378,133 +444,95 @@ async def incremental_sync(args) -> None:
             end_str = window_end.strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
 
             print(f"Window: {window_start.date()} to {window_end.date()}")
-
-            # Paginate within this window
-            current_index = 0
-            while True:
-                data = await fetch_nvd_page(
-                    session, current_index,
-                    last_mod_start=start_str,
-                    last_mod_end=end_str,
-                )
-                await asyncio.sleep(REQUEST_DELAY)
-
-                total_in_window = data.get("totalResults", 0)
-                if current_index == 0:
-                    print(f"  {total_in_window} modified CVEs in this window")
-
-                vulnerabilities = data.get("vulnerabilities", [])
-                if not vulnerabilities:
-                    break
-
-                cve_records = parse_cve_records(vulnerabilities)
-
-                embeddings = None
-                if openai_client and cve_records:
-                    contents = [build_content(cve) for cve in cve_records]
-                    embeddings = await generate_embeddings(openai_client, contents)
-
-                for db_attempt in range(3):
-                    try:
-                        conn = await asyncpg.connect(dsn=dsn)
-                        await register_vector(conn)
-                        await upsert_batch(conn, cve_records, embeddings)
-                        await conn.close()
-                        break
-                    except (ConnectionResetError, OSError, asyncpg.ConnectionDoesNotExistError) as e:
-                        if db_attempt < 2:
-                            print(f"  DB connection error: {e}, retrying in 5s...")
-                            await asyncio.sleep(5)
-                        else:
-                            raise
-
-                total_loaded += len(cve_records)
-                current_index += RESULTS_PER_PAGE
-
-                if current_index >= total_in_window:
-                    break
-
+            total_loaded += await _sync_window(session, start_str, end_str, openai_client, dsn)
             window_start = window_end
 
-    elapsed = time.time() - started_at
-    print(f"Done! Synced {total_loaded} CVEs in {int(elapsed // 60)}m{int(elapsed % 60):02d}s")
+    print(f"Done! Synced {total_loaded} CVEs in {format_elapsed(started_at)}")
 
 
-async def backfill_embeddings(args) -> None:
+# -- Backfill embeddings --
+
+async def _backfill_batch(dsn: str, openai_client: AsyncOpenAI) -> int:
+    """Fetch one batch of rows missing embeddings, generate and save them. Returns count processed."""
+    for attempt in range(MAX_RETRIES):
+        try:
+            conn = await asyncpg.connect(dsn=dsn, timeout=DB_CONNECT_TIMEOUT)
+            await register_vector(conn)
+
+            rows = await conn.fetch(
+                """
+                SELECT cve_id, content FROM nvd_vulnerabilities
+                WHERE embedding IS NULL
+                ORDER BY cve_id
+                LIMIT $1
+                """,
+                EMBEDDING_BATCH_SIZE,
+            )
+
+            if not rows:
+                await conn.close()
+                return 0
+
+            texts = [row["content"] for row in rows]
+            cve_ids = [row["cve_id"] for row in rows]
+
+            resp = await openai_client.embeddings.create(
+                model=settings.embedding_model, input=texts
+            )
+            embeddings = [item.embedding for item in resp.data]
+
+            update_rows = [
+                (np.array(emb, dtype=np.float32), cve_id)
+                for cve_id, emb in zip(cve_ids, embeddings)
+            ]
+            await conn.executemany(
+                "UPDATE nvd_vulnerabilities SET embedding = $1 WHERE cve_id = $2",
+                update_rows,
+            )
+
+            await conn.close()
+            return len(rows)
+        except DB_RETRY_EXCEPTIONS as e:
+            try:
+                await conn.close()
+            except Exception:
+                pass
+            if attempt < MAX_RETRIES - 1:
+                print(f"  Connection error: {e}, retrying in 5s...")
+                await asyncio.sleep(5)
+            else:
+                raise
+    return 0
+
+
+async def backfill_embeddings() -> None:
     """Generate embeddings for records that don't have them."""
     dsn = settings.get_database_dsn()
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
 
-    conn = await asyncpg.connect(dsn=dsn)
+    conn = await asyncpg.connect(dsn=dsn, timeout=DB_CONNECT_TIMEOUT)
     await register_vector(conn)
-
     total = await conn.fetchval(
         "SELECT COUNT(*) FROM nvd_vulnerabilities WHERE embedding IS NULL"
     )
-    print(f"Found {total} records without embeddings")
-
-    if total == 0:
-        await conn.close()
-        return
-
     await conn.close()
+
+    print(f"Found {total} records without embeddings")
+    if total == 0:
+        return
 
     processed = 0
     while processed < total:
-        for attempt in range(3):
-            try:
-                conn = await asyncpg.connect(dsn=dsn)
-                await register_vector(conn)
-
-                rows = await conn.fetch(
-                    """
-                    SELECT cve_id, content FROM nvd_vulnerabilities
-                    WHERE embedding IS NULL
-                    ORDER BY cve_id
-                    LIMIT $1
-                    """,
-                    EMBEDDING_BATCH_SIZE,
-                )
-
-                if not rows:
-                    await conn.close()
-                    processed = total
-                    break
-
-                texts = [row["content"] for row in rows]
-                cve_ids = [row["cve_id"] for row in rows]
-
-                resp = await openai_client.embeddings.create(
-                    model=settings.embedding_model, input=texts
-                )
-                embeddings = [item.embedding for item in resp.data]
-
-                update_rows = [
-                    (np.array(emb, dtype=np.float32), cve_id)
-                    for cve_id, emb in zip(cve_ids, embeddings)
-                ]
-                await conn.executemany(
-                    "UPDATE nvd_vulnerabilities SET embedding = $1 WHERE cve_id = $2",
-                    update_rows,
-                )
-
-                await conn.close()
-                processed += len(rows)
-                print(f"  Backfilled {processed}/{total}")
-                break
-            except (ConnectionResetError, OSError, asyncpg.ConnectionDoesNotExistError) as e:
-                try:
-                    await conn.close()
-                except Exception:
-                    pass
-                if attempt < 2:
-                    print(f"  Connection error: {e}, retrying in 5s...")
-                    await asyncio.sleep(5)
-                else:
-                    raise
+        batch_count = await _backfill_batch(dsn, openai_client)
+        if batch_count == 0:
+            break
+        processed += batch_count
+        print(f"  Backfilled {processed}/{total}")
 
     print(f"Done! Backfilled embeddings for {processed} records")
 
+
+# -- Entrypoint --
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description="Full NVD ETL")
@@ -517,18 +545,19 @@ async def main() -> None:
     rate_info = "with API key (50 req/30s)" if NVD_API_KEY else "without API key (5 req/30s)"
     print(f"NVD Full ETL | Rate limiting: {rate_info}")
 
-    # Ensure schema exists
-    dsn = settings.get_database_dsn()
-    conn = await asyncpg.connect(dsn=dsn)
-    from rag.database import SCHEMA_SQL
-    await conn.execute(SCHEMA_SQL)
-    await conn.close()
-
     if args.backfill_embeddings:
-        await backfill_embeddings(args)
+        await backfill_embeddings()
     elif args.incremental:
         await incremental_sync(args)
     else:
+        print("Connecting to database...")
+        dsn = settings.get_database_dsn()
+        conn = await asyncpg.connect(dsn=dsn, timeout=DB_CONNECT_TIMEOUT)
+        print("Connected. Ensuring schema...")
+        from rag.database import SCHEMA_SQL
+        await conn.execute(SCHEMA_SQL)
+        await conn.close()
+        print("Schema verified.")
         await full_load(args)
 
 
