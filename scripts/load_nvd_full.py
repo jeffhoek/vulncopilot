@@ -32,6 +32,7 @@ import asyncpg
 import numpy as np
 from openai import AsyncOpenAI
 from pgvector.asyncpg import register_vector
+from pgvector.vector import Vector
 
 from config import settings
 from scripts.nvd_utils import (
@@ -48,8 +49,12 @@ from scripts.nvd_utils import (
 NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 RESULTS_PER_PAGE = 2000
 EMBEDDING_BATCH_SIZE = 500
+BACKFILL_BATCH_SIZE = 1000
 CHECKPOINT_FILE = Path(__file__).resolve().parent.parent / "data" / "nvd_checkpoint.json"
-DB_RETRY_EXCEPTIONS = (ConnectionResetError, OSError, asyncpg.ConnectionDoesNotExistError, asyncio.TimeoutError)
+DB_RETRY_EXCEPTIONS = (
+    ConnectionResetError, OSError, asyncpg.ConnectionDoesNotExistError,
+    asyncio.TimeoutError, asyncpg.exceptions.ReadOnlySQLTransactionError,
+)
 DB_CONNECT_TIMEOUT = 10
 MAX_RETRIES = 3
 
@@ -450,11 +455,14 @@ async def incremental_sync(args) -> None:
     print(f"Done! Synced {total_loaded} CVEs in {format_elapsed(started_at)}")
 
 
+BACKFILL_MAX_RETRIES = 5
+
+
 # -- Backfill embeddings --
 
 async def _backfill_batch(dsn: str, openai_client: AsyncOpenAI) -> int:
     """Fetch one batch of rows missing embeddings, generate and save them. Returns count processed."""
-    for attempt in range(MAX_RETRIES):
+    for attempt in range(BACKFILL_MAX_RETRIES):
         try:
             conn = await asyncpg.connect(dsn=dsn, timeout=DB_CONNECT_TIMEOUT)
             await register_vector(conn)
@@ -466,7 +474,7 @@ async def _backfill_batch(dsn: str, openai_client: AsyncOpenAI) -> int:
                 ORDER BY cve_id
                 LIMIT $1
                 """,
-                EMBEDDING_BATCH_SIZE,
+                BACKFILL_BATCH_SIZE,
             )
 
             if not rows:
@@ -476,18 +484,33 @@ async def _backfill_batch(dsn: str, openai_client: AsyncOpenAI) -> int:
             texts = [row["content"] for row in rows]
             cve_ids = [row["cve_id"] for row in rows]
 
-            resp = await openai_client.embeddings.create(
-                model=settings.embedding_model, input=texts
-            )
+            # Retry OpenAI API call with exponential backoff
+            for embed_attempt in range(3):
+                try:
+                    resp = await openai_client.embeddings.create(
+                        model=settings.embedding_model, input=texts
+                    )
+                    break
+                except Exception as e:
+                    if embed_attempt < 2:
+                        wait = 2 ** embed_attempt
+                        print(f"  Embedding API error: {e}, retrying in {wait}s...")
+                        await asyncio.sleep(wait)
+                    else:
+                        raise
+
             embeddings = [item.embedding for item in resp.data]
 
-            update_rows = [
-                (np.array(emb, dtype=np.float32), cve_id)
-                for cve_id, emb in zip(cve_ids, embeddings)
-            ]
-            await conn.executemany(
-                "UPDATE nvd_vulnerabilities SET embedding = $1 WHERE cve_id = $2",
-                update_rows,
+            embedding_vectors = [Vector(emb) for emb in embeddings]
+            await conn.execute(
+                """
+                UPDATE nvd_vulnerabilities AS n
+                SET embedding = u.embedding
+                FROM unnest($1::varchar[], $2::vector[]) AS u(cve_id, embedding)
+                WHERE n.cve_id = u.cve_id
+                """,
+                cve_ids,
+                embedding_vectors,
             )
 
             await conn.close()
@@ -497,9 +520,10 @@ async def _backfill_batch(dsn: str, openai_client: AsyncOpenAI) -> int:
                 await conn.close()
             except Exception:
                 pass
-            if attempt < MAX_RETRIES - 1:
-                print(f"  Connection error: {e}, retrying in 5s...")
-                await asyncio.sleep(5)
+            if attempt < BACKFILL_MAX_RETRIES - 1:
+                wait = 5 * (2 ** attempt)
+                print(f"  Connection error: {e}, retrying in {wait}s...")
+                await asyncio.sleep(wait)
             else:
                 raise
     return 0
@@ -507,6 +531,11 @@ async def _backfill_batch(dsn: str, openai_client: AsyncOpenAI) -> int:
 
 async def backfill_embeddings() -> None:
     """Generate embeddings for records that don't have them."""
+    print(
+        "TIP: Run with 'caffeinate -i' to prevent sleep: "
+        "caffeinate -i uv run python scripts/load_nvd_full.py --backfill-embeddings"
+    )
+
     dsn = settings.get_database_dsn()
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
 
