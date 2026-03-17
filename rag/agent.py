@@ -40,12 +40,12 @@ async def query(ctx: RunContext[Deps], sql: str) -> str:
     if not sql.strip().upper().startswith("SELECT"):
         return "Error: Only SELECT statements are permitted."
 
-    limit_match = re.search(r'\bLIMIT\s+(\d+)\b', sql, re.IGNORECASE)
+    limit_match = re.search(r"\bLIMIT\s+(\d+)\b", sql, re.IGNORECASE)
     if limit_match:
         if int(limit_match.group(1)) > MAX_QUERY_ROWS:
-            sql = sql[:limit_match.start(1)] + str(MAX_QUERY_ROWS) + sql[limit_match.end(1):]
+            sql = sql[: limit_match.start(1)] + str(MAX_QUERY_ROWS) + sql[limit_match.end(1) :]
     else:
-        sql = sql.rstrip().rstrip(';') + f" LIMIT {MAX_QUERY_ROWS}"
+        sql = sql.rstrip().rstrip(";") + f" LIMIT {MAX_QUERY_ROWS}"
 
     try:
         async with ctx.deps.vector_store.pool.acquire() as conn:

@@ -9,9 +9,7 @@ async def generate_embedding(client: AsyncOpenAI, text: str) -> list[float]:
     return response.data[0].embedding
 
 
-async def generate_embeddings_batch(
-    client: AsyncOpenAI, texts: list[str]
-) -> list[list[float]]:
+async def generate_embeddings_batch(client: AsyncOpenAI, texts: list[str]) -> list[list[float]]:
     """Generate embeddings for multiple texts in a single batch."""
     if not texts:
         return []

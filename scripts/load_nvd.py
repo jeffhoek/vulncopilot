@@ -94,7 +94,9 @@ async def fetch_nvd_cve(client: httpx.AsyncClient, cve_id: str) -> dict | None:
     return vulns[0].get("cve")
 
 
-async def fetch_nvd_batch(client: httpx.AsyncClient, cve_ids: list[str], offset: int, total: int) -> tuple[list[dict], int]:
+async def fetch_nvd_batch(
+    client: httpx.AsyncClient, cve_ids: list[str], offset: int, total: int
+) -> tuple[list[dict], int]:
     """Fetch a batch of CVEs from the NVD API. Returns (records, skipped)."""
     results = []
     skipped = 0
@@ -167,7 +169,7 @@ def build_upsert_params(cve_data: dict, embedding: list[float]) -> tuple:
 
 async def upsert_records(conn: asyncpg.Connection, cve_records: list[dict], embeddings: list[list[float]]) -> None:
     """Upsert NVD records into PostgreSQL."""
-    for i, (cve_data, emb) in enumerate(zip(cve_records, embeddings)):
+    for i, (cve_data, emb) in enumerate(zip(cve_records, embeddings, strict=True)):
         params = build_upsert_params(cve_data, emb)
         await conn.execute(UPSERT_SQL, *params)
         if (i + 1) % 500 == 0:
@@ -220,6 +222,7 @@ async def main() -> None:
     dsn = settings.get_database_dsn()
     conn = await asyncpg.connect(dsn=dsn)
     from rag.database import SCHEMA_SQL
+
     await conn.execute(SCHEMA_SQL)
     await register_vector(conn)
 
@@ -256,7 +259,14 @@ async def main() -> None:
             total_batches = (len(new_ids) + BATCH_SIZE - 1) // BATCH_SIZE
 
             loaded, skipped = await process_batch(
-                client, openai_client, dsn, batch_ids, batch_num, total_batches, batch_start, len(new_ids),
+                client,
+                openai_client,
+                dsn,
+                batch_ids,
+                batch_num,
+                total_batches,
+                batch_start,
+                len(new_ids),
             )
             total_loaded += loaded
             total_skipped += skipped
