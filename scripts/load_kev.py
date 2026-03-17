@@ -67,7 +67,7 @@ async def generate_embeddings(openai_client: AsyncOpenAI, texts: list[str]) -> l
 
 async def upsert_records(conn: asyncpg.Connection, vulns: list[dict], embeddings: list[list[float]]) -> None:
     """Upsert vulnerability records into PostgreSQL."""
-    for i, (vuln, emb) in enumerate(zip(vulns, embeddings)):
+    for i, (vuln, emb) in enumerate(zip(vulns, embeddings, strict=True)):
         cwes = vuln.get("cwes") or []
         await conn.execute(
             """
@@ -134,6 +134,7 @@ async def main() -> None:
 
     # Create extension and table before registering the vector codec
     from rag.database import SCHEMA_SQL
+
     await conn.execute(SCHEMA_SQL)
     await register_vector(conn)
 

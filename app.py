@@ -11,6 +11,7 @@ from rag.vector_store import PgVectorStore
 
 if os.getenv("LANGFUSE_PUBLIC_KEY"):
     from langfuse import get_client
+
     get_client()
     Agent.instrument_all()
 
@@ -30,10 +31,7 @@ def auth_callback(username: str, password: str):
 
 
 def _quick_query_actions() -> list[cl.Action]:
-    return [
-        cl.Action(name="quick_query", label=label, payload={"query": label})
-        for label in settings.action_buttons
-    ]
+    return [cl.Action(name="quick_query", label=label, payload={"query": label}) for label in settings.action_buttons]
 
 
 @cl.action_callback("quick_query")
@@ -70,9 +68,7 @@ async def on_message(message: cl.Message) -> None:
     deps = cl.user_session.get("deps")
 
     if deps is None:
-        await cl.Message(
-            content="Error: Knowledge base not initialized. Please refresh the page."
-        ).send()
+        await cl.Message(content="Error: Knowledge base not initialized. Please refresh the page.").send()
         return
 
     result = await rag_agent.run(message.content, deps=deps)

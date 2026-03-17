@@ -15,11 +15,12 @@ Set NVD_API_KEY env var to increase rate limit from 5 to 50 requests per 30 seco
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -52,8 +53,11 @@ EMBEDDING_BATCH_SIZE = 500
 BACKFILL_BATCH_SIZE = 1000
 CHECKPOINT_FILE = Path(__file__).resolve().parent.parent / "data" / "nvd_checkpoint.json"
 DB_RETRY_EXCEPTIONS = (
-    ConnectionResetError, OSError, asyncpg.ConnectionDoesNotExistError,
-    asyncio.TimeoutError, asyncpg.exceptions.ReadOnlySQLTransactionError,
+    ConnectionResetError,
+    OSError,
+    asyncpg.ConnectionDoesNotExistError,
+    asyncio.TimeoutError,
+    asyncpg.exceptions.ReadOnlySQLTransactionError,
 )
 DB_CONNECT_TIMEOUT = 10
 MAX_RETRIES = 3
@@ -63,10 +67,21 @@ NVD_API_KEY = os.getenv("NVD_API_KEY")
 REQUEST_DELAY = 0.7 if NVD_API_KEY else 6.0
 
 STAGING_COLUMNS = [
-    "cve_id", "description", "cvss_v31_score", "cvss_v31_severity",
-    "cvss_v31_vector", "cvss_v2_score", "cvss_v2_severity",
-    "cwes", "affected_products", "reference_urls",
-    "published", "last_modified", "raw_json", "content", "embedding",
+    "cve_id",
+    "description",
+    "cvss_v31_score",
+    "cvss_v31_severity",
+    "cvss_v31_vector",
+    "cvss_v2_score",
+    "cvss_v2_severity",
+    "cwes",
+    "affected_products",
+    "reference_urls",
+    "published",
+    "last_modified",
+    "raw_json",
+    "content",
+    "embedding",
 ]
 
 CREATE_STAGING_SQL = """
@@ -127,6 +142,7 @@ def format_elapsed(started_at: float) -> str:
 
 # -- Checkpoint --
 
+
 def load_checkpoint() -> dict | None:
     if CHECKPOINT_FILE.exists():
         return json.loads(CHECKPOINT_FILE.read_text())
@@ -144,6 +160,7 @@ def clear_checkpoint() -> None:
 
 
 # -- NVD API --
+
 
 async def fetch_nvd_page(
     session,
@@ -184,7 +201,7 @@ async def fetch_nvd_page(
                 raise
         except (httpx.ReadTimeout, httpx.ConnectTimeout):
             if attempt < MAX_RETRIES - 1:
-                print(f"  Timeout, retrying in 10s...")
+                print("  Timeout, retrying in 10s...")
                 await asyncio.sleep(10)
             else:
                 raise
@@ -198,6 +215,7 @@ def parse_cve_records(vulnerabilities: list[dict]) -> list[dict]:
 
 
 # -- Database --
+
 
 def _prepare_row(cve_data: dict, embedding: list[float] | None) -> tuple:
     """Prepare a single CVE record as a tuple for bulk insert."""
@@ -227,16 +245,15 @@ def _prepare_row(cve_data: dict, embedding: list[float] | None) -> tuple:
 
 async def upsert_batch(conn: asyncpg.Connection, cve_records: list[dict], embeddings: list[list[float]] | None) -> None:
     """Upsert a batch of CVE records using a temp table + INSERT ON CONFLICT."""
-    rows = [
-        _prepare_row(cve, embeddings[i] if embeddings else None)
-        for i, cve in enumerate(cve_records)
-    ]
+    rows = [_prepare_row(cve, embeddings[i] if embeddings else None) for i, cve in enumerate(cve_records)]
 
     async with conn.transaction():
         await conn.execute("DROP TABLE IF EXISTS _nvd_staging")
         await conn.execute(CREATE_STAGING_SQL)
         await conn.copy_records_to_table(
-            "_nvd_staging", records=rows, columns=STAGING_COLUMNS,
+            "_nvd_staging",
+            records=rows,
+            columns=STAGING_COLUMNS,
         )
         await conn.execute(UPSERT_FROM_STAGING_SQL)
 
@@ -259,6 +276,7 @@ async def upsert_with_retry(dsn: str, cve_records: list[dict], embeddings: list[
 
 
 # -- Embeddings --
+
 
 async def generate_embeddings(openai_client: AsyncOpenAI, texts: list[str]) -> list[list[float]]:
     """Generate embeddings in batches."""
@@ -289,6 +307,7 @@ async def embed_and_upsert(
 
 
 # -- Full load --
+
 
 async def _get_total_results(start_index: int) -> tuple[dict, int, int]:
     """Fetch the first page and return (page_data, total_results, total_pages)."""
@@ -356,29 +375,39 @@ async def full_load(args) -> None:
                 print(f"Reached page limit ({args.limit}), stopping.")
                 break
 
-            print(f"Page {page_num}/{total_pages} | index {current_index}/{total_results} | elapsed: {format_elapsed(started_at)}")
+            print(
+                f"Page {page_num}/{total_pages} | index {current_index}/{total_results}"
+                f" | elapsed: {format_elapsed(started_at)}"
+            )
 
             use_first_page = first_page if current_index == start_index else None
             loaded = await _process_full_load_page(
-                session, current_index, use_first_page, openai_client, dsn,
+                session,
+                current_index,
+                use_first_page,
+                openai_client,
+                dsn,
             )
 
             total_loaded += loaded
             current_index += RESULTS_PER_PAGE
             page_num += 1
 
-            save_checkpoint({
-                "mode": "full",
-                "start_index": current_index,
-                "total_results": total_results,
-                "started_at": datetime.now(timezone.utc).isoformat(),
-            })
+            save_checkpoint(
+                {
+                    "mode": "full",
+                    "start_index": current_index,
+                    "total_results": total_results,
+                    "started_at": datetime.now(UTC).isoformat(),
+                }
+            )
 
     clear_checkpoint()
     print(f"Done! Loaded {total_loaded} CVEs in {format_elapsed(started_at)}")
 
 
 # -- Incremental sync --
+
 
 async def _sync_window(
     session,
@@ -393,7 +422,8 @@ async def _sync_window(
 
     while True:
         data = await fetch_nvd_page(
-            session, current_index,
+            session,
+            current_index,
             last_mod_start=start_str,
             last_mod_end=end_str,
         )
@@ -430,8 +460,8 @@ async def incremental_sync(args) -> None:
         print("No existing records found. Run a full load first.")
         return
 
-    high_water = datetime.combine(row["max_date"], datetime.min.time(), tzinfo=timezone.utc)
-    now = datetime.now(timezone.utc)
+    high_water = datetime.combine(row["max_date"], datetime.min.time(), tzinfo=UTC)
+    now = datetime.now(UTC)
     print(f"Syncing changes from {high_water.date()} to {now.date()}")
 
     openai_client = None
@@ -460,6 +490,7 @@ BACKFILL_MAX_RETRIES = 5
 
 # -- Backfill embeddings --
 
+
 async def _backfill_batch(dsn: str, openai_client: AsyncOpenAI) -> int:
     """Fetch one batch of rows missing embeddings, generate and save them. Returns count processed."""
     for attempt in range(BACKFILL_MAX_RETRIES):
@@ -487,13 +518,11 @@ async def _backfill_batch(dsn: str, openai_client: AsyncOpenAI) -> int:
             # Retry OpenAI API call with exponential backoff
             for embed_attempt in range(3):
                 try:
-                    resp = await openai_client.embeddings.create(
-                        model=settings.embedding_model, input=texts
-                    )
+                    resp = await openai_client.embeddings.create(model=settings.embedding_model, input=texts)
                     break
                 except Exception as e:
                     if embed_attempt < 2:
-                        wait = 2 ** embed_attempt
+                        wait = 2**embed_attempt
                         print(f"  Embedding API error: {e}, retrying in {wait}s...")
                         await asyncio.sleep(wait)
                     else:
@@ -516,12 +545,10 @@ async def _backfill_batch(dsn: str, openai_client: AsyncOpenAI) -> int:
             await conn.close()
             return len(rows)
         except DB_RETRY_EXCEPTIONS as e:
-            try:
+            with contextlib.suppress(Exception):
                 await conn.close()
-            except Exception:
-                pass
             if attempt < BACKFILL_MAX_RETRIES - 1:
-                wait = 5 * (2 ** attempt)
+                wait = 5 * (2**attempt)
                 print(f"  Connection error: {e}, retrying in {wait}s...")
                 await asyncio.sleep(wait)
             else:
@@ -541,9 +568,7 @@ async def backfill_embeddings() -> None:
 
     conn = await asyncpg.connect(dsn=dsn, timeout=DB_CONNECT_TIMEOUT)
     await register_vector(conn)
-    total = await conn.fetchval(
-        "SELECT COUNT(*) FROM nvd_vulnerabilities WHERE embedding IS NULL"
-    )
+    total = await conn.fetchval("SELECT COUNT(*) FROM nvd_vulnerabilities WHERE embedding IS NULL")
     await conn.close()
 
     print(f"Found {total} records without embeddings")
@@ -562,6 +587,7 @@ async def backfill_embeddings() -> None:
 
 
 # -- Entrypoint --
+
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description="Full NVD ETL")
@@ -584,6 +610,7 @@ async def main() -> None:
         conn = await asyncpg.connect(dsn=dsn, timeout=DB_CONNECT_TIMEOUT)
         print("Connected. Ensuring schema...")
         from rag.database import SCHEMA_SQL
+
         await conn.execute(SCHEMA_SQL)
         await conn.close()
         print("Schema verified.")
