@@ -1,10 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-## Project Overview
-
-This is a Python project using uv for package management.
+A RAG chatbot built with Pydantic AI and Chainlit that indexes CISA KEV and NIST NVD vulnerability data into PostgreSQL with pgvector embeddings, enabling natural language queries about security vulnerabilities via semantic search and direct SQL tools.
 
 ## Development Commands
 
