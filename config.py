@@ -1,17 +1,15 @@
-from typing import Optional
-
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
     # API Keys (anthropic is optional — not needed by ETL scripts)
-    anthropic_api_key: Optional[str] = None
+    anthropic_api_key: str | None = None
     openai_api_key: str
-    nvd_api_key: Optional[str] = None
+    nvd_api_key: str | None = None
 
     # PostgreSQL Configuration
     # Use PG_DATABASE_URL (not DATABASE_URL) to avoid Chainlit auto-activating its data layer
-    pg_database_url: Optional[str] = None
+    pg_database_url: str | None = None
     pg_host: str = "localhost"
     pg_port: int = 5432
     pg_user: str = "postgresuser"
