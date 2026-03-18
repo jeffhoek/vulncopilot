@@ -59,6 +59,20 @@ A retrieval-augmented generation chatbot for vulnerability research, built with 
 
    `DATABASE_URL` takes precedence over the individual `PG_*` vars when set.
 
+## Development
+
+Install pre-commit hooks to enable linting (ruff), formatting, and secrets detection (gitleaks) on each commit:
+
+```bash
+uv run pre-commit install
+```
+
+To run all checks manually:
+
+```bash
+uv run pre-commit run --all-files
+```
+
 ## Authentication
 
 The app requires username/password login. To set it up:
