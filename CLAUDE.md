@@ -2,11 +2,19 @@
 
 A RAG chatbot built with Pydantic AI and Chainlit that indexes CISA KEV and NIST NVD vulnerability data into PostgreSQL with pgvector embeddings, enabling natural language queries about security vulnerabilities via semantic search and direct SQL tools.
 
+## Docs
+
+- [NVD integration & ETL](docs/nvd-integration.md)
+- [pgvector migration](docs/pgvector-migration.md)
+- [Deployment: Azure](docs/deploy-azure-app-service.md), [GCP](docs/deploy-gcp-cloud-run.md), [EKS](docs/eks-runbook.md)
+- [Langfuse observability](docs/langfuse-setup.md)
+- [Future enhancements](docs/future-enhancements.md)
+
 ## Development Commands
 
 ```bash
-# Run the main script
-uv run python main.py
+# Start the chatbot
+uv run chainlit run app.py
 
 # Add a dependency
 uv add <package-name>
