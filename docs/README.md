@@ -6,14 +6,12 @@
 |---|---|
 | [data-loading.md](data-loading.md) | ETL guide for populating the database with CISA KEV and NVD data (KEV-scoped and full NVD) |
 | [nvd-integration.md](nvd-integration.md) | NVD & CISA KEV dataset integration, schema, and cross-reference query examples |
-| [pgvector-migration.md](pgvector-migration.md) | Migration from in-memory NumPy vector store to PostgreSQL with pgvector |
 | [deploy-azure-app-service.md](deploy-azure-app-service.md) | Deploy to Azure App Service as a Linux container, using ACR, Key Vault, and Azure Pipelines with Workload Identity Federation |
 | [deploy-gcp-cloud-run.md](deploy-gcp-cloud-run.md) | Deploy to Google Cloud Run |
 | [eks-runbook.md](eks-runbook.md) | Deploy to AWS EKS using GitHub Actions CI/CD |
 | [langfuse-setup.md](langfuse-setup.md) | Set up self-hosted Langfuse observability alongside the chatbot via Podman Compose |
 | [action-buttons.md](action-buttons.md) | Configure Chainlit action buttons on the welcome message for quick-access suggested questions |
 | [postgres-hosting-options.md](postgres-hosting-options.md) | PostgreSQL hosting options evaluated for the full NVD dataset (~250k CVEs) with pgvector |
-| [use-cases.md](use-cases.md) | Potential use cases for the CISA KEV & NVD vulnerability research chatbot |
 | [future-enhancements.md](future-enhancements.md) | Potential improvements and feature additions |
 
 
