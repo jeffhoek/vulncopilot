@@ -9,35 +9,34 @@ The chatbot cross-references two vulnerability datasets:
 
 Both tables share `cve_id` as a key, enabling JOINs for cross-referenced analysis.
 
-## Setup
+## ETL Scripts
 
-### 1. Load KEV data (if not already loaded)
+There are two NVD loading strategies — see [data-loading.md](data-loading.md) for the full guide:
+
+| Script | Scope | Records |
+|---|---|---|
+| `scripts/load_nvd.py` | NVD data for KEV CVEs only | ~1,500 |
+| `scripts/load_nvd_full.py` | Entire NVD database | ~280,000 |
+
+Both scripts share parsing and extraction logic via `scripts/nvd_utils.py`.
+
+**Quick start** (KEV-scoped):
+
+```bash
+uv run python scripts/load_kev.py       # Load KEV first
+uv run python scripts/load_nvd.py       # Enrich with NVD data
+uv run chainlit run app.py              # Start the chatbot
+```
+
+**Full NVD** (for broader vulnerability research):
 
 ```bash
 uv run python scripts/load_kev.py
-```
-
-### 2. Load NVD data
-
-```bash
-uv run python scripts/load_nvd.py
-```
-
-The NVD ETL fetches data only for CVE IDs already in the KEV table.
-
-**Rate limits:**
-- Without API key: 5 requests/30s (~5 min for full load)
-- With API key: 50 requests/30s (~30 sec for full load)
-
-To use an API key, set the `NVD_API_KEY` environment variable. Request a free key at https://nvd.nist.gov/developers/request-an-api-key.
-
-The script is incremental — it skips CVEs already loaded, so re-runs only fetch new entries.
-
-### 3. Run the chatbot
-
-```bash
+uv run python scripts/load_nvd_full.py  # ~280k CVEs, supports --incremental, --skip-embeddings, --backfill-embeddings
 uv run chainlit run app.py
 ```
+
+See [postgres-hosting-options.md](postgres-hosting-options.md) for storage sizing with the full NVD dataset.
 
 ## Database Schema
 

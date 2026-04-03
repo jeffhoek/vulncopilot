@@ -147,17 +147,20 @@ See [docs/langfuse-setup.md](docs/langfuse-setup.md) for Langfuse configuration 
 
 ## Loading Data
 
-The ETL scripts fetch data from public APIs and generate embeddings. Run them once after the database is ready, and re-run to pick up new CISA KEV entries.
+The ETL scripts fetch data from public APIs and generate embeddings. Run them once after the database is ready, and re-run to pick up new entries.
 
 ```bash
 # Fetch CISA KEV catalog and generate embeddings (~1,500 records)
 uv run python scripts/load_kev.py
 
-# Fetch NVD enrichment (CVSS scores, severity, affected products)
-# Set NVD_API_KEY in .env for a higher rate limit (optional):
-# https://nvd.nist.gov/developers/request-an-api-key
+# Fetch NVD enrichment for KEV CVEs (CVSS scores, severity, affected products)
 uv run python scripts/load_nvd.py
+
+# Or load the full NVD database (~280k CVEs) — optional, requires more storage
+uv run python scripts/load_nvd_full.py
 ```
+
+Set `NVD_API_KEY` in `.env` for a higher NVD API rate limit (optional). See [docs/data-loading.md](docs/data-loading.md) for the full guide, including incremental sync, checkpoint/resume, and embedding backfill options.
 
 ## Configuration
 

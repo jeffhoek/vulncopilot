@@ -1,0 +1,134 @@
+# Data Loading
+
+This guide covers populating the PostgreSQL/pgvector database with CISA KEV and NIST NVD vulnerability data. These steps apply regardless of where the database is hosted (local container, Timescale Cloud, RDS, etc.).
+
+## Prerequisites
+
+- PostgreSQL with pgvector extension enabled
+- `.env` configured with `DATABASE_URL` (or `PG_*` vars) and `OPENAI_API_KEY`
+- Dependencies installed (`uv sync`)
+
+Verify pgvector is available:
+
+```bash
+psql "$DATABASE_URL" -c "SELECT extname FROM pg_extension WHERE extname = 'vector';"
+```
+
+If not present:
+
+```bash
+psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;"
+```
+
+## Schema
+
+Schema creation runs automatically on app startup. To create it manually:
+
+```bash
+uv run python -c "from rag.database import init_db; import asyncio; asyncio.run(init_db())"
+```
+
+## ETL Scripts
+
+There are three ETL scripts, each targeting a different scope:
+
+| Script | Scope | Records | Use case |
+|---|---|---|---|
+| `scripts/load_kev.py` | CISA KEV catalog | ~1,500 | Always run first — KEV is the primary dataset |
+| `scripts/load_nvd.py` | NVD data for KEV CVEs only | ~1,500 | Enriches KEV entries with CVSS scores, severity, affected products |
+| `scripts/load_nvd_full.py` | Entire NVD database | ~280,000 | Full NVD corpus for broader vulnerability research |
+
+### 1. Load CISA KEV data
+
+Fetches the CISA KEV catalog and generates OpenAI embeddings:
+
+```bash
+uv run python scripts/load_kev.py
+```
+
+### 2. Load NVD enrichment (KEV-scoped)
+
+Fetches NVD data only for CVE IDs already in the `kev_vulnerabilities` table:
+
+```bash
+uv run python scripts/load_nvd.py
+```
+
+**Rate limits:**
+- Without API key: 5 requests/30s (~5 min for full load)
+- With API key: 50 requests/30s (~30 sec for full load)
+
+The script is incremental — it skips CVEs already loaded, so re-runs only fetch new entries.
+
+### 3. Load full NVD database (optional)
+
+Fetches the entire NVD (~280k CVEs) via paginated bulk API calls. This is a large dataset requiring ~3.5-5.5 GB of storage (see [postgres-hosting-options.md](postgres-hosting-options.md) for sizing details).
+
+```bash
+# Full load — fetches all CVEs, generates embeddings
+uv run python scripts/load_nvd_full.py
+
+# Incremental sync — fetches only CVEs modified since last run
+uv run python scripts/load_nvd_full.py --incremental
+
+# Data only, skip embedding generation (faster initial load)
+uv run python scripts/load_nvd_full.py --skip-embeddings
+
+# Backfill embeddings for records loaded without them
+uv run python scripts/load_nvd_full.py --backfill-embeddings
+
+# Test with a limited number of pages
+uv run python scripts/load_nvd_full.py --limit 3
+```
+
+**Features:**
+- Paginated bulk fetching (2,000 CVEs per page)
+- Checkpoint/resume — interrupted runs pick up where they left off
+- Staging table upserts (`INSERT ... ON CONFLICT`) for idempotent loads
+- Retry logic for both NVD API and database connections
+
+**Recommended workflow for the full NVD load:**
+
+1. Load data without embeddings (fast, ~30 min with API key):
+   ```bash
+   uv run python scripts/load_nvd_full.py --skip-embeddings
+   ```
+
+2. Backfill embeddings separately (can be interrupted and resumed):
+   ```bash
+   caffeinate -i uv run python scripts/load_nvd_full.py --backfill-embeddings
+   ```
+
+3. Keep up to date with incremental syncs:
+   ```bash
+   uv run python scripts/load_nvd_full.py --incremental
+   ```
+
+## NVD API Key
+
+All NVD scripts benefit from an API key, which increases the rate limit from 5 to 50 requests per 30 seconds. Set `NVD_API_KEY` in `.env`. Request a free key at https://nvd.nist.gov/developers/request-an-api-key.
+
+## Verification
+
+```bash
+psql "$DATABASE_URL" -c "SELECT COUNT(*) FROM kev_vulnerabilities;"
+psql "$DATABASE_URL" -c "SELECT COUNT(*) FROM nvd_vulnerabilities;"
+psql "$DATABASE_URL" -c "SELECT COUNT(*) FROM nvd_vulnerabilities WHERE embedding IS NULL;"
+```
+
+## Refreshing Data
+
+**CISA KEV + NVD enrichment** (re-run to pick up new entries):
+
+```bash
+uv run python scripts/load_kev.py
+uv run python scripts/load_nvd.py
+```
+
+**Full NVD** (incremental sync):
+
+```bash
+uv run python scripts/load_nvd_full.py --incremental
+```
+
+No app restart is needed — data is queried live from the database.
