@@ -4,6 +4,14 @@ A retrieval-augmented generation chatbot for vulnerability research, built with 
 
 ![Architecture diagram](docs/chatbot-architecture.drawio.png)
 
+## Use Cases
+
+- **Vulnerability triage** — prioritize patching by querying CVSS scores, ransomware campaign usage, and CISA remediation due dates
+- **Compliance reporting** — list KEV vulnerabilities by vendor or product for BOD 22-01 and patch management audits
+- **Incident response** — look up CVE details and cross-reference KEV and NVD data without navigating government websites
+- **Vendor risk assessment** — identify which vendors have the most known exploited vulnerabilities
+- **DevSecOps** — check project dependencies for known exploited vulnerabilities before shipping
+
 ## Features
 
 - CISA KEV + NVD datasets (~1,500 KEV entries, enriched with CVSS scores from NVD)
@@ -147,17 +155,20 @@ See [docs/langfuse-setup.md](docs/langfuse-setup.md) for Langfuse configuration 
 
 ## Loading Data
 
-The ETL scripts fetch data from public APIs and generate embeddings. Run them once after the database is ready, and re-run to pick up new CISA KEV entries.
+The ETL scripts fetch data from public APIs and generate embeddings. Run them once after the database is ready, and re-run to pick up new entries.
 
 ```bash
 # Fetch CISA KEV catalog and generate embeddings (~1,500 records)
 uv run python scripts/load_kev.py
 
-# Fetch NVD enrichment (CVSS scores, severity, affected products)
-# Set NVD_API_KEY in .env for a higher rate limit (optional):
-# https://nvd.nist.gov/developers/request-an-api-key
+# Fetch NVD enrichment for KEV CVEs (CVSS scores, severity, affected products)
 uv run python scripts/load_nvd.py
+
+# Or load the full NVD database (~280k CVEs) — optional, requires more storage
+uv run python scripts/load_nvd_full.py
 ```
+
+Set `NVD_API_KEY` in `.env` for a higher NVD API rate limit (optional). See [docs/data-loading.md](docs/data-loading.md) for the full guide, including incremental sync, checkpoint/resume, and embedding backfill options. For storage sizing and PostgreSQL hosting options when loading the full NVD dataset, see [docs/postgres-hosting-options.md](docs/postgres-hosting-options.md). For the database schema and example queries, see [docs/nvd-integration.md](docs/nvd-integration.md).
 
 ## Configuration
 
@@ -168,7 +179,7 @@ Optional settings in `.env`:
 | `LLM_MODEL` | `anthropic:claude-haiku-4-5-20251001` | LLM for generating responses |
 | `TOP_K` | `5` | Number of documents to retrieve via semantic search |
 | `SYSTEM_PROMPT` | *(KEV/NVD-aware prompt)* | System prompt for the agent |
-| `ACTION_BUTTONS` | `[]` | Quick-query buttons shown in the UI (JSON array of strings) |
+| `ACTION_BUTTONS` | `[]` | Quick-query buttons shown in the UI (JSON array of strings) — see [docs/action-buttons.md](docs/action-buttons.md) |
 | `NVD_API_KEY` | *(none)* | Optional — increases NVD API rate limit |
 
 ### LLM Model Options
@@ -210,3 +221,7 @@ User → Chainlit → Pydantic AI Agent ──────────┤
                          ↓                    └─ query (direct SQL)
                        Claude
 ```
+
+## Further Reading
+
+See [docs/](docs/README.md) for the full documentation index, including deployment guides (Azure, GCP, EKS), observability setup, and [future enhancements](docs/future-enhancements.md).

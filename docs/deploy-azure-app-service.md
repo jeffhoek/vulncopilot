@@ -230,47 +230,9 @@ az webapp restart \
 
 ## Step 5: Load KEV and NVD Data (one-time)
 
-Data is loaded directly into Timescale Cloud from your local machine. Run these steps once after the database is reachable. Set `PG_DATABASE_URL` in your `.env` pointing to Timescale Cloud before running.
+Set `DATABASE_URL` in your `.env` pointing to Timescale Cloud, then follow the [Data Loading guide](data-loading.md) to populate the database.
 
-### 5.0 Verify pgvector is enabled on Timescale Cloud
-
-Connect to your Timescale Cloud instance and confirm:
-```bash
-psql "$PG_DATABASE_URL" -c "SELECT extname FROM pg_extension WHERE extname = 'vector';"
-```
-
-If not present, enable it:
-```bash
-psql "$PG_DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;"
-```
-
-### 5.1 Create the schema
-
-Schema creation runs automatically on app startup. To run manually:
-```bash
-uv run python -c "from rag.database import init_db; import asyncio; asyncio.run(init_db())"
-```
-
-### 5.2 Load CISA KEV data (~1,500 records)
-
-Fetches the CISA KEV catalog and generates OpenAI embeddings:
-```bash
-uv run python scripts/load_kev.py
-```
-
-### 5.3 Load NVD enrichment data
-
-Fetches CVSS scores, severity, and affected products from NIST NVD. Rate-limited — set `NVD_API_KEY` in `.env` to increase the rate limit ([request a key](https://nvd.nist.gov/developers/request-an-api-key)):
-```bash
-uv run python scripts/load_nvd.py
-```
-
-### 5.4 Verify record counts
-
-```bash
-psql "$PG_DATABASE_URL" -c "SELECT COUNT(*) FROM kev_vulnerabilities;"
-psql "$PG_DATABASE_URL" -c "SELECT COUNT(*) FROM nvd_vulnerabilities;"
-```
+> **Timescale Cloud note:** The connection string must include `?sslmode=require` — connections without SSL will be refused.
 
 ---
 
