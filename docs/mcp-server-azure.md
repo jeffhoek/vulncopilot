@@ -38,13 +38,77 @@ all other secrets.
 
 ---
 
+## Manual Steps Overview
+
+Two steps in this plan require human action with authenticated credentials.
+Both are flagged inline with `> MANUAL STEP` callouts.
+
+| Step | Auth required | When |
+|---|---|---|
+| 0.2 — Set Key Vault secret | `az login` + Key Vault Secrets Officer role on the vault | Before development begins (can be done now) |
+| 7.1 — Push to `main` | Git push access to the repository | After all code and tests pass |
+
+All other steps are code edits, local commands, or verification checks that
+run under the developer's own shell session without additional authentication.
+
+---
+
 ## Work Plan
+
+### Phase 0 — Upfront Manual Steps (do these before writing any code)
+
+These steps are sequenced first because they require human authentication and
+can block later phases if left until deploy time.
+
+**0.1** Generate the MCP API key locally. No authentication required.
+
+```bash
+MCP_API_KEY=$(openssl rand -hex 32)
+echo $MCP_API_KEY
+```
+
+Store the output in a password manager immediately. This value is used in
+steps 0.2 and 0.3 and is the credential external agents will present.
+
+**0.2** Add `MCP_API_KEY` to `.env` for local development. No authentication
+required — this is a local file edit.
+
+```bash
+echo "MCP_API_KEY=$MCP_API_KEY" >> .env
+```
+
+`.env` is already in `.gitignore` and will not be committed.
+
+---
+
+> **MANUAL STEP — Azure CLI authentication required**
+>
+> **0.3** Set the secret in Key Vault.
+>
+> **Prerequisites:**
+> - `az login` completed and pointing at the correct subscription
+> - Your identity has the `Key Vault Secrets Officer` role on
+>   `kv-chainlit-rag-dev` (see Step 4.0 in `docs/deploy-azure-app-service.md`
+>   for how to grant yourself this role if needed)
+>
+> ```bash
+> az keyvault secret set \
+>   --vault-name kv-chainlit-rag-dev \
+>   --name mcp-api-key \
+>   --value "$MCP_API_KEY"
+> ```
+>
+> This can be run now, before any code is written. The App Service will not
+> attempt to resolve this secret until the Bicep app setting is added in
+> Phase 6 and the pipeline runs.
+
+---
 
 ### Phase 1 — Python: Dependency
 
 **1.1** Add `fastmcp` to project dependencies.
 
-```
+```bash
 uv add fastmcp
 ```
 
@@ -58,9 +122,8 @@ Verify `fastmcp` appears in `pyproject.toml` under `[project.dependencies]`.
 
 - Field type: `str | None = None`
 - Sourced from env var `MCP_API_KEY`
-- No default — absence disables the MCP route at startup
-
-**2.2** Add `MCP_API_KEY=<local-dev-key>` to `.env` (not committed).
+- No default — absence causes a startup warning and skips auth enforcement
+  (permits local dev without a key set)
 
 ---
 
@@ -83,8 +146,8 @@ Verify `fastmcp` appears in `pyproject.toml` under `[project.dependencies]`.
 - ASGI middleware that reads `X-API-Key` from request headers
 - Compares to `settings.mcp_api_key` using `secrets.compare_digest`
 - Returns HTTP 401 if key is absent or incorrect
-- Skips auth if `settings.mcp_api_key` is `None` and logs a startup warning
-  (allows local dev without a key)
+- If `settings.mcp_api_key` is `None`, logs a startup warning and skips
+  auth enforcement (local dev only — never `None` in Azure via KV reference)
 
 ---
 
@@ -114,8 +177,11 @@ auth middleware from 3.3 and injects the shared pool/client from app lifespan.
 
 ```bash
 uv run chainlit run app.py
-curl -s http://localhost:8000/mcp  # expect 401 without key
-curl -s -H "X-API-Key: <dev-key>" http://localhost:8000/mcp  # expect MCP response
+curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/mcp
+# Expected: 401
+
+curl -s -H "X-API-Key: $MCP_API_KEY" http://localhost:8000/mcp
+# Expected: MCP capability response
 ```
 
 **5.2** Run the MCP Inspector against the local server to confirm both tools
@@ -128,34 +194,23 @@ npx @modelcontextprotocol/inspector http://localhost:8000/mcp
 # Test query: sql="SELECT cve_id, vendor_project FROM kev_vulnerabilities LIMIT 5"
 ```
 
-**5.3** Confirm a disallowed SQL statement returns an error (not a 500).
+**5.3** Confirm a disallowed SQL statement returns a tool-level error, not HTTP 500.
 
 ```bash
-curl -X POST -H "X-API-Key: <dev-key>" \
+curl -X POST \
+  -H "X-API-Key: $MCP_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"tool":"query","arguments":{"sql":"DROP TABLE kev_vulnerabilities"}}' \
   http://localhost:8000/mcp
-# Expected: tool result containing "Error: Only SELECT statements are permitted."
+# Expected: tool result body containing "Error: Only SELECT statements are permitted."
+# HTTP status must be 200 (tool error returned as MCP result, not HTTP error)
 ```
 
 ---
 
-### Phase 6 — Azure Infrastructure: Key Vault Secret
+### Phase 6 — Azure Infrastructure: Bicep App Setting
 
-**6.1** Add provisioning instructions for the new secret to
-`docs/deploy-azure-app-service.md` (Step 4.1 — alongside existing secrets).
-
-```bash
-az keyvault secret set \
-  --vault-name kv-chainlit-rag-dev \
-  --name mcp-api-key \
-  --value "$MCP_API_KEY"
-```
-
-This is a manual, one-time step — same pattern as all other secrets. Generate
-a random key (minimum 32 bytes, base64 or hex encoded).
-
-**6.2** Add the Key Vault reference app setting to
+**6.1** Add the Key Vault reference app setting to
 `infra/modules/app-service.bicep` in the `appSettings` array.
 
 ```bicep
@@ -165,51 +220,56 @@ a random key (minimum 32 bytes, base64 or hex encoded).
 }
 ```
 
-No other Bicep changes are needed (no new resources, no new role assignments —
-the managed identity already has `Key Vault Secrets User`).
+No other Bicep changes are needed. No new resources, no new role assignments —
+the managed identity already has `Key Vault Secrets User` on the vault.
+
+**6.2** Update `docs/deploy-azure-app-service.md` to document the new secret.
+
+- Add the `az keyvault secret set --name mcp-api-key` command alongside the
+  existing secrets in Step 4.1
+- Note that this secret must exist before the pipeline runs, or the App Service
+  will start with a warning and the `/mcp` route will reject all requests
 
 ---
 
 ### Phase 7 — Deploy
 
-**7.1** Set the Key Vault secret in the target environment (run once, before or
-after deploy — the app handles a missing key gracefully with a startup warning).
+---
 
-```bash
-MCP_API_KEY=$(openssl rand -hex 32)
-az keyvault secret set \
-  --vault-name kv-chainlit-rag-dev \
-  --name mcp-api-key \
-  --value "$MCP_API_KEY"
-```
+> **MANUAL STEP — Git push access required**
+>
+> **7.1** Push to `main` to trigger the Azure Pipeline.
+>
+> The existing three-stage pipeline (Build → DeployInfra → DeployApp) handles
+> everything: image build, Bicep incremental deploy (picks up the new
+> `MCP_API_KEY` app setting from 6.1), and App Service restart.
+>
+> No pipeline YAML changes are needed.
 
-Store the generated key in a password manager — this is the credential external
-agents will use.
+---
 
-**7.2** Push to `main`. The existing Azure Pipelines run handles build, Bicep
-deploy (incremental — picks up the new app setting), and container restart.
-
-No pipeline YAML changes are needed.
-
-**7.3** Verify the new app setting resolved in Key Vault after deploy.
+**7.2** Verify the new app setting resolved in Key Vault after the pipeline
+completes. Requires `az login`.
 
 ```bash
 az webapp config appsettings list \
   --name app-chainlit-rag-dev \
   --resource-group rg-chainlit-rag-dev \
   --query "[?name=='MCP_API_KEY']" -o table
-# Value column should show "@Microsoft.KeyVault(...)", status: Resolved
+# Value column must show "@Microsoft.KeyVault(...)" with status: Resolved
+# "Failed" here means the secret name in KV does not match, or MI lacks access
 ```
 
-**7.4** Smoke-test the live endpoint.
+**7.3** Smoke-test the live endpoint. No Azure auth required — uses only the
+MCP API key from step 0.1.
 
 ```bash
-# 401 without key
+# Confirm 401 without key
 curl -s -o /dev/null -w "%{http_code}" \
   https://app-chainlit-rag-dev.azurewebsites.net/mcp
 
-# Tool list with key
-curl -s -H "X-API-Key: <mcp-api-key>" \
+# Confirm tool list with key
+curl -s -H "X-API-Key: $MCP_API_KEY" \
   https://app-chainlit-rag-dev.azurewebsites.net/mcp
 ```
 
@@ -226,14 +286,7 @@ curl -s -H "X-API-Key: <mcp-api-key>" \
 - Authentication: how to generate a key, where it is stored, how to rotate it
 - Troubleshooting: 401 causes, tool errors, connection timeouts
 
-**8.2** Update `docs/deploy-azure-app-service.md`.
-
-- Add Step 4.1 for setting `mcp-api-key` in Key Vault (within the existing
-  Step 4 secrets provisioning section)
-- Add a verification step in the Verification section:
-  `curl -H "X-API-Key: ..." https://<app>.azurewebsites.net/mcp`
-
-**8.3** Add `[MCP server](docs/mcp-server.md)` to the Docs list in `CLAUDE.md`.
+**8.2** Add `[MCP server](docs/mcp-server.md)` to the Docs list in `CLAUDE.md`.
 
 ---
 
@@ -260,6 +313,6 @@ curl -s -H "X-API-Key: <mcp-api-key>" \
 | `mcp/server.py` | New — FastMCP app, tools, auth middleware, ASGI factory |
 | `app.py` | Mount `/mcp` into Chainlit's FastAPI app |
 | `infra/modules/app-service.bicep` | Add `MCP_API_KEY` KV reference app setting |
-| `docs/deploy-azure-app-service.md` | Add step 4.1 (secret) and verification step |
+| `docs/deploy-azure-app-service.md` | Add `mcp-api-key` secret to Step 4.1 |
 | `docs/mcp-server.md` | New — operational guide |
 | `CLAUDE.md` | Add link to `docs/mcp-server.md` |
