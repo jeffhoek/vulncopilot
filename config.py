@@ -67,6 +67,9 @@ class Settings(BaseSettings):
         "Answer concisely. If the answer is not in the data, say so."
     )
 
+    # MCP Server
+    mcp_api_key: str | None = None
+
     # Action Buttons (optional)
     action_buttons: list[str] = []
 
