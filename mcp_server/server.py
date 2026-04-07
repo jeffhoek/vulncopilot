@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 import secrets
@@ -121,10 +122,13 @@ class McpRouterMiddleware:
                 "MCP_API_KEY is not set — /mcp endpoint is UNAUTHENTICATED. "
                 "Set MCP_API_KEY in .env or Key Vault before deploying."
             )
-        # stateless_http=True avoids needing to manage FastMCP's session lifespan.
         self._mcp_asgi: ASGIApp = mcp.http_app(transport="streamable-http", stateless_http=True)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "lifespan":
+            await self._handle_lifespan(scope, receive, send)
+            return
+
         if scope["type"] not in ("http", "websocket"):
             await self.app(scope, receive, send)
             return
@@ -144,3 +148,36 @@ class McpRouterMiddleware:
                 return
 
         await self._mcp_asgi(scope, receive, send)
+
+    async def _handle_lifespan(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Run Chainlit and FastMCP lifespans concurrently."""
+        mcp_startup_done: asyncio.Event = asyncio.Event()
+        mcp_should_shutdown: asyncio.Event = asyncio.Event()
+
+        async def mcp_receive() -> dict:
+            if not mcp_startup_done.is_set():
+                return {"type": "lifespan.startup"}
+            await mcp_should_shutdown.wait()
+            return {"type": "lifespan.shutdown"}
+
+        async def mcp_send(message: dict) -> None:
+            if message["type"] == "lifespan.startup.complete":
+                mcp_startup_done.set()
+
+        async def patched_receive() -> dict:
+            message = await receive()
+            if message.get("type") == "lifespan.shutdown":
+                mcp_should_shutdown.set()
+            return message
+
+        mcp_task = asyncio.ensure_future(self._mcp_asgi({**scope}, mcp_receive, mcp_send))
+        await mcp_startup_done.wait()
+
+        try:
+            await self.app(scope, patched_receive, send)
+        finally:
+            mcp_should_shutdown.set()
+            try:
+                await asyncio.wait_for(asyncio.shield(mcp_task), timeout=5.0)
+            except (TimeoutError, asyncio.CancelledError):
+                mcp_task.cancel()
