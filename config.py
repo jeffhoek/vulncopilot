@@ -23,6 +23,7 @@ class Settings(BaseSettings):
 
     # RAG Configuration
     top_k: int = 5
+    max_history_messages: int = 50
     embedding_model: str = "text-embedding-3-small"
     llm_model: str = "anthropic:claude-haiku-4-5-20251001"
     system_prompt: str = (
@@ -64,7 +65,10 @@ class Settings(BaseSettings):
         "conceptual questions (e.g. 'tell me about Log4j').\n"
         "- **query**: execute SQL. Use for counts, top-N, date filters, "
         "grouping, listing, and JOINs across tables.\n\n"
-        "Answer concisely. If the answer is not in the data, say so."
+        "Answer concisely. If the answer is not in the data, say so. "
+        "When the user asks a follow-up question, use the conversation history "
+        "to resolve references (e.g., 'it', 'that CVE', 'the one you just described') "
+        "before querying the database."
     )
 
     # MCP Server
