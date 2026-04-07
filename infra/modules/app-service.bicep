@@ -98,6 +98,10 @@ resource appService 'Microsoft.Web/sites@2023-12-01' = {
           name: 'CHAINLIT_AUTH_SECRET'
           value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=chainlit-auth-secret)'
         }
+        {
+          name: 'MCP_API_KEY'
+          value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=mcp-api-key)'
+        }
       ]
     }
   }

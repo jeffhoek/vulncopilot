@@ -182,7 +182,7 @@ az role assignment create \
 
 Use the bash `for` loop with `read` shell built-in to securely enter the env vars:
 ```bash
-for var in ANTHROPIC_API_KEY OPENAI_API_KEY APP_PASSWORD CHAINLIT_AUTH_SECRET PG_DATABASE_URL; do
+for var in ANTHROPIC_API_KEY OPENAI_API_KEY APP_PASSWORD CHAINLIT_AUTH_SECRET PG_DATABASE_URL MCP_API_KEY; do
   echo "$var" && read -rs $var
 done
 ```
@@ -216,7 +216,15 @@ az keyvault secret set \
   --vault-name kv-chainlit-rag-dev \
   --name database-url \
   --value "$PG_DATABASE_URL"
+
+az keyvault secret set \
+  --vault-name kv-chainlit-rag-dev \
+  --name mcp-api-key \
+  --value "$MCP_API_KEY"
 ```
+
+> `mcp-api-key` must exist before the pipeline runs — if absent, the App Service
+> will start with a warning and the `/mcp` route will reject all requests with 401.
 
 Restart the App Service to re-resolve the Key Vault references:
 
