@@ -2,15 +2,12 @@ import logging
 import re
 import secrets
 from dataclasses import dataclass
-from typing import Any
 
 import asyncpg
 from fastmcp import FastMCP
 from openai import AsyncOpenAI
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
 from starlette.responses import JSONResponse
-from starlette.types import ASGIApp
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from config import settings
 from rag.embeddings import generate_embedding
@@ -110,28 +107,40 @@ async def query(sql: str) -> str:
     return "\n".join(lines)
 
 
-class ApiKeyMiddleware(BaseHTTPMiddleware):
-    """Require X-API-Key header on all /mcp requests."""
+class McpRouterMiddleware:
+    """
+    Starlette middleware that intercepts /mcp* requests before Chainlit's router,
+    enforces API key auth, and delegates to FastMCP's ASGI app.
+    All other requests pass through untouched.
+    """
 
-    async def dispatch(self, request: Request, call_next: Any) -> Any:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
         if settings.mcp_api_key is None:
-            return await call_next(request)
+            logger.warning(
+                "MCP_API_KEY is not set — /mcp endpoint is UNAUTHENTICATED. "
+                "Set MCP_API_KEY in .env or Key Vault before deploying."
+            )
+        # stateless_http=True avoids needing to manage FastMCP's session lifespan.
+        self._mcp_asgi: ASGIApp = mcp.http_app(transport="streamable-http", stateless_http=True)
 
-        api_key = request.headers.get("X-API-Key", "")
-        if not secrets.compare_digest(api_key, settings.mcp_api_key):
-            return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
 
-        return await call_next(request)
+        path: str = scope.get("path", "")
+        if not (path == "/mcp" or path.startswith("/mcp/")):
+            await self.app(scope, receive, send)
+            return
 
+        # Auth check
+        if settings.mcp_api_key is not None:
+            headers = dict(scope.get("headers", []))
+            api_key = headers.get(b"x-api-key", b"").decode()
+            if not secrets.compare_digest(api_key, settings.mcp_api_key):
+                response = JSONResponse({"detail": "Unauthorized"}, status_code=401)
+                await response(scope, receive, send)
+                return
 
-def build_mcp_asgi_app() -> ASGIApp:
-    """Return the FastMCP Streamable HTTP ASGI app wrapped with auth middleware."""
-    if settings.mcp_api_key is None:
-        logger.warning(
-            "MCP_API_KEY is not set — /mcp endpoint is UNAUTHENTICATED. "
-            "Set MCP_API_KEY in .env or Key Vault before deploying."
-        )
-
-    asgi_app = mcp.http_app(transport="streamable-http")
-    asgi_app.add_middleware(ApiKeyMiddleware)
-    return asgi_app
+        await self._mcp_asgi(scope, receive, send)
