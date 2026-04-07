@@ -180,38 +180,33 @@ fastapi_app.mount("/mcp", build_mcp_asgi_app())
 
 ### Phase 5 — Local Testing
 
-**5.1** Start the app locally and confirm `/mcp` responds.
+**5.1** Start the app locally and confirm the auth middleware responds correctly.
 
 ```bash
 uv run chainlit run app.py
 curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/mcp
 # Expected: 401
-
-curl -s -H "X-API-Key: $MCP_API_KEY" http://localhost:8000/mcp
-# Expected: MCP capability response
 ```
 
 **5.2** Run the MCP Inspector against the local server to confirm both tools
-are discoverable and return correct results.
+are discoverable, return correct results, and that disallowed SQL returns a
+tool-level error (not an HTTP 500).
 
 ```bash
-npx @modelcontextprotocol/inspector http://localhost:8000/mcp
-# Tools list should show: retrieve, query
-# Test retrieve: query="log4j remote code execution"
-# Test query: sql="SELECT cve_id, vendor_project FROM kev_vulnerabilities LIMIT 5"
+npx @modelcontextprotocol/inspector
+# In the UI: Transport Type = Streamable HTTP (Direct connection via Proxy)
+# URL: http://localhost:8000/mcp
+# Authentication > Custom Headers: X-API-Key = $MCP_API_KEY
+# Click Connect
 ```
 
-**5.3** Confirm a disallowed SQL statement returns a tool-level error, not HTTP 500.
-
-```bash
-curl -X POST \
-  -H "X-API-Key: $MCP_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"tool":"query","arguments":{"sql":"DROP TABLE kev_vulnerabilities"}}' \
-  http://localhost:8000/mcp
-# Expected: tool result body containing "Error: Only SELECT statements are permitted."
-# HTTP status must be 200 (tool error returned as MCP result, not HTTP error)
-```
+In the **Tools** tab:
+- Tool list should show: `retrieve`, `query`
+- Test `retrieve`: `query="log4j remote code execution"`
+- Test `query`: `sql="SELECT cve_id, vendor_project FROM kev_vulnerabilities LIMIT 5"`
+- Test `query` with disallowed statement: `sql="DROP TABLE kev_vulnerabilities"`
+  — result must contain `"Error: Only SELECT statements are permitted."` (tool-level
+  error in the result body, not an HTTP 500)
 
 ---
 
