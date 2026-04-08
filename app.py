@@ -53,7 +53,9 @@ async def on_quick_query(action: cl.Action) -> None:
     if deps is None:
         await cl.Message(content="Error: Knowledge base not initialized. Please refresh the page.").send()
         return
-    result = await rag_agent.run(query, deps=deps)
+    history = cl.user_session.get("message_history", [])
+    result = await rag_agent.run(query, deps=deps, message_history=history)
+    cl.user_session.set("message_history", result.all_messages()[-settings.max_history_messages :])
     await cl.Message(content=result.output, actions=_quick_query_actions()).send()
 
 
@@ -66,6 +68,7 @@ async def on_chat_start() -> None:
 
     deps = Deps(openai_client=openai_client, vector_store=vector_store)
     cl.user_session.set("deps", deps)
+    cl.user_session.set("message_history", [])
 
     doc_count = await vector_store.get_document_count()
     await cl.Message(
@@ -83,5 +86,7 @@ async def on_message(message: cl.Message) -> None:
         await cl.Message(content="Error: Knowledge base not initialized. Please refresh the page.").send()
         return
 
-    result = await rag_agent.run(message.content, deps=deps)
+    history = cl.user_session.get("message_history", [])
+    result = await rag_agent.run(message.content, deps=deps, message_history=history)
+    cl.user_session.set("message_history", result.all_messages()[-settings.max_history_messages :])
     await cl.Message(content=result.output, actions=_quick_query_actions()).send()
