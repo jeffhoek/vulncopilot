@@ -91,10 +91,10 @@ async def query(sql: str) -> str:
         async with _mcp_context.pool.acquire() as conn:
             rows = await conn.fetch(sql)
     except asyncpg.PostgresError as e:
-        return f"Query error: {e}"
+        return f"Error: {e}"
     except Exception:
         logger.exception("Unexpected error in MCP query tool")
-        return "Internal error executing query."
+        return "Error: Internal error executing query."
 
     if not rows:
         return "No results found."
