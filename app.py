@@ -1,10 +1,12 @@
 import os
 
 import chainlit as cl
+from chainlit.server import app as fastapi_app
 from openai import AsyncOpenAI
 from pydantic_ai import Agent
 
 from config import settings
+from mcp_server.server import McpRouterMiddleware, set_mcp_context
 from rag.agent import Deps, rag_agent
 from rag.database import init_db
 from rag.vector_store import PgVectorStore
@@ -14,6 +16,16 @@ if os.getenv("LANGFUSE_PUBLIC_KEY"):
 
     get_client()
     Agent.instrument_all()
+
+fastapi_app.add_middleware(McpRouterMiddleware)
+
+
+@cl.on_app_startup
+async def on_app_startup() -> None:
+    """Initialise shared resources and inject context into the MCP server."""
+    pool = await init_db()
+    openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+    set_mcp_context(pool, openai_client)
 
 
 @cl.password_auth_callback

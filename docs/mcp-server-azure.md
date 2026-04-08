@@ -129,21 +129,25 @@ Verify `fastmcp` appears in `pyproject.toml` under `[project.dependencies]`.
 
 ### Phase 3 — Python: MCP Server Module
 
-**3.1** Create `mcp/server.py`.
+> **Note:** The package is named `mcp_server/` (not `mcp/`) to avoid shadowing
+> the `mcp` SDK package that fastmcp imports internally.
+
+**3.1** Create `mcp_server/server.py`.
 
 - Instantiate a `FastMCP` app named `"kev-nvd-rag"`
 - Define tool `retrieve(query: str) -> str` — calls `generate_embedding` then
   `vector_store.search`, identical logic to `rag/agent.py:retrieve`
 - Define tool `query(sql: str) -> str` — SELECT-only guard, 100-row cap,
   identical logic to `rag/agent.py:query`
-- Both tools accept the shared asyncpg pool and OpenAI client via lifespan
-  context (no new connection pool; reuse the one initialised in `app.py`)
+- Both tools read from a module-level `McpContext` dataclass (pool +
+  openai_client + vector_store). Context is injected via `set_mcp_context()`
+  called from the `app.py` lifespan (no new connection pool).
 
-**3.2** Create `mcp/__init__.py` (empty, marks package).
+**3.2** Create `mcp_server/__init__.py` (empty, marks package).
 
-**3.3** Write `X-API-Key` authentication middleware in `mcp/server.py`.
+**3.3** Write `X-API-Key` authentication middleware in `mcp_server/server.py`.
 
-- ASGI middleware that reads `X-API-Key` from request headers
+- `BaseHTTPMiddleware` subclass that reads `X-API-Key` from request headers
 - Compares to `settings.mcp_api_key` using `secrets.compare_digest`
 - Returns HTTP 401 if key is absent or incorrect
 - If `settings.mcp_api_key` is `None`, logs a startup warning and skips
@@ -153,19 +157,22 @@ Verify `fastmcp` appears in `pyproject.toml` under `[project.dependencies]`.
 
 ### Phase 4 — Python: Mount into Chainlit
 
-**4.1** In `app.py`, after Chainlit initialises its FastAPI app, mount the MCP
-ASGI app at `/mcp`.
+**4.1** In `app.py`, after Chainlit initialises its FastAPI app, call
+`set_mcp_context()` from the lifespan to inject the shared pool/client, then
+mount the MCP ASGI app at `/mcp`.
 
 ```python
-# Pseudocode — exact API depends on FastMCP version
 from chainlit.server import app as fastapi_app
-from mcp.server import build_mcp_asgi_app
+from mcp_server.server import build_mcp_asgi_app, set_mcp_context
+
+# Inside the lifespan, after pool and openai_client are created:
+set_mcp_context(pool, openai_client)
 
 fastapi_app.mount("/mcp", build_mcp_asgi_app())
 ```
 
-`build_mcp_asgi_app()` wraps the FastMCP Streamable HTTP transport with the
-auth middleware from 3.3 and injects the shared pool/client from app lifespan.
+`build_mcp_asgi_app()` returns the FastMCP Streamable HTTP ASGI app
+(`mcp.http_app(transport="streamable-http")`) wrapped with `ApiKeyMiddleware`.
 
 **4.2** Confirm the existing `/healthz` route is unaffected (no route collision).
 
@@ -173,38 +180,33 @@ auth middleware from 3.3 and injects the shared pool/client from app lifespan.
 
 ### Phase 5 — Local Testing
 
-**5.1** Start the app locally and confirm `/mcp` responds.
+**5.1** Start the app locally and confirm the auth middleware responds correctly.
 
 ```bash
 uv run chainlit run app.py
 curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/mcp
 # Expected: 401
-
-curl -s -H "X-API-Key: $MCP_API_KEY" http://localhost:8000/mcp
-# Expected: MCP capability response
 ```
 
 **5.2** Run the MCP Inspector against the local server to confirm both tools
-are discoverable and return correct results.
+are discoverable, return correct results, and that disallowed SQL returns a
+tool-level error (not an HTTP 500).
 
 ```bash
-npx @modelcontextprotocol/inspector http://localhost:8000/mcp
-# Tools list should show: retrieve, query
-# Test retrieve: query="log4j remote code execution"
-# Test query: sql="SELECT cve_id, vendor_project FROM kev_vulnerabilities LIMIT 5"
+npx @modelcontextprotocol/inspector
+# In the UI: Transport Type = Streamable HTTP (Direct connection via Proxy)
+# URL: http://localhost:8000/mcp
+# Authentication > Custom Headers: X-API-Key = $MCP_API_KEY
+# Click Connect
 ```
 
-**5.3** Confirm a disallowed SQL statement returns a tool-level error, not HTTP 500.
-
-```bash
-curl -X POST \
-  -H "X-API-Key: $MCP_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"tool":"query","arguments":{"sql":"DROP TABLE kev_vulnerabilities"}}' \
-  http://localhost:8000/mcp
-# Expected: tool result body containing "Error: Only SELECT statements are permitted."
-# HTTP status must be 200 (tool error returned as MCP result, not HTTP error)
-```
+In the **Tools** tab:
+- Tool list should show: `retrieve`, `query`
+- Test `retrieve`: `query="log4j remote code execution"`
+- Test `query`: `sql="SELECT cve_id, vendor_project FROM kev_vulnerabilities LIMIT 5"`
+- Test `query` with disallowed statement: `sql="DROP TABLE kev_vulnerabilities"`
+  — result must contain `"Error: Only SELECT statements are permitted."` (tool-level
+  error in the result body, not an HTTP 500)
 
 ---
 
@@ -309,8 +311,8 @@ curl -s -H "X-API-Key: $MCP_API_KEY" \
 | `pyproject.toml` | Add `fastmcp` dependency |
 | `.env` | Add `MCP_API_KEY` (local dev, not committed) |
 | `config.py` | Add `mcp_api_key: str \| None = None` |
-| `mcp/__init__.py` | New (empty package marker) |
-| `mcp/server.py` | New — FastMCP app, tools, auth middleware, ASGI factory |
+| `mcp_server/__init__.py` | New (empty package marker) |
+| `mcp_server/server.py` | New — FastMCP app, tools, auth middleware, ASGI factory |
 | `app.py` | Mount `/mcp` into Chainlit's FastAPI app |
 | `infra/modules/app-service.bicep` | Add `MCP_API_KEY` KV reference app setting |
 | `docs/deploy-azure-app-service.md` | Add `mcp-api-key` secret to Step 4.1 |

@@ -20,6 +20,7 @@ A retrieval-augmented generation chatbot for vulnerability research, built with 
 - Two agent tools: `retrieve` (semantic search) and `query` (direct SQL)
 - Claude LLM via Pydantic AI agent
 - Chainlit web interface with authentication
+- MCP server at `/mcp` — exposes `retrieve` and `query` to external agents (Azure deployment)
 - Langfuse observability (optional, self-hosted via Compose)
 
 ## Requirements
@@ -206,7 +207,7 @@ Then open http://localhost:8080.
 
 | Guide | Description |
 |-------|-------------|
-| [docs/deploy-azure-app-service.md](docs/deploy-azure-app-service.md) | Deploy to Azure App Service as a Linux container, using ACR, Key Vault, Timescale Cloud, and Azure Pipelines |
+| [docs/deploy-azure-app-service.md](docs/deploy-azure-app-service.md) | Deploy to Azure App Service as a Linux container, using ACR, Key Vault, Timescale Cloud, and Azure Pipelines — includes MCP server setup |
 | [docs/deploy-gcp-cloud-run.md](docs/deploy-gcp-cloud-run.md) | Deploy to Google Cloud Run |
 | [docs/eks-runbook.md](docs/eks-runbook.md) | Deploy to AWS EKS using GitHub Actions CI/CD |
 
@@ -219,7 +220,9 @@ NVD API ──────┘                                            ↓
                                               ┌─ retrieve (semantic search)
 User → Chainlit → Pydantic AI Agent ──────────┤
                          ↓                    └─ query (direct SQL)
-                       Claude
+                       Claude                        ↑
+                                        MCP clients (external agents)
+                                        └─ /mcp  (Streamable HTTP, API key auth)
 ```
 
 ## Further Reading
