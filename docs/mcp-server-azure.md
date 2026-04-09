@@ -266,13 +266,25 @@ az webapp config appsettings list \
 MCP API key from step 0.1.
 
 ```bash
-# Confirm 401 without key
+# Confirm 401 without key (GET is sufficient to trigger auth check)
 curl -s -o /dev/null -w "%{http_code}" \
   https://app-chainlit-rag-dev.azurewebsites.net/mcp
-
-# Confirm tool list with key
-curl -s -H "X-API-Key: $MCP_API_KEY" \
+# Expected: 401
+```
+```bash
+# Confirm MCP server responds with a valid initialize result
+# Note: Streamable HTTP requires POST, JSON-RPC body, and both Accept types
+curl -s -X POST \
+  -H "X-API-Key: $MCP_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"0.0.1"}}}' \
   https://app-chainlit-rag-dev.azurewebsites.net/mcp
+```
+Expected:
+```bash
+event: message
+data: {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{"experimental":{},"prompts":{"listChanged":true},"resources":{"subscribe":false,"listChanged":true},"tools":{"listChanged":true},"extensions":{"io.modelcontextprotocol/ui":{}}},"serverInfo":{"name":"kev-nvd-rag","version":"3.1.0"}}}
 ```
 
 ---
