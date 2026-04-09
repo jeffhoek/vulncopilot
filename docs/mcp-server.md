@@ -121,6 +121,36 @@ tool picker.
 
 ---
 
+## Connect from Claude Code CLI
+
+Claude Code supports HTTP MCP servers natively — no `mcp-remote` bridge needed.
+
+Add via CLI (recommended):
+
+```bash
+claude mcp add-json kev-nvd-rag '{"type":"http","url":"https://app-chainlit-rag-dev.azurewebsites.net/mcp","headers":{"X-API-Key":"YOUR_MCP_API_KEY"}}'
+```
+
+Or add manually to `~/.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "kev-nvd-rag": {
+      "type": "http",
+      "url": "https://app-chainlit-rag-dev.azurewebsites.net/mcp",
+      "headers": {
+        "X-API-Key": "YOUR_MCP_API_KEY"
+      }
+    }
+  }
+}
+```
+
+Verify it loaded with `/mcp` in the CLI.
+
+---
+
 ## Connect from a Pydantic AI Agent
 
 ```python
