@@ -89,21 +89,32 @@ JOIN both tables on `cve_id`.
 
 ## Connect from Claude Desktop
 
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+Claude Desktop only supports stdio servers natively, so a bridge is needed
+for HTTP MCP servers. Use `mcp-remote` (no separate install required — `npx`
+fetches it on first run).
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`
+(Windows: `%APPDATA%\Claude\claude_desktop_config.json`):
 
 ```json
 {
   "mcpServers": {
     "kev-nvd-rag": {
-      "type": "http",
-      "url": "https://app-chainlit-rag-dev.azurewebsites.net/mcp",
-      "headers": {
-        "X-API-Key": "YOUR_MCP_API_KEY"
-      }
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://app-chainlit-rag-dev.azurewebsites.net/mcp",
+        "--header",
+        "X-API-Key:YOUR_MCP_API_KEY"
+      ]
     }
   }
 }
 ```
+
+Note the `:` (no space) between the header name and value — this is required
+by `mcp-remote`'s argument parser.
 
 Restart Claude Desktop. The `retrieve` and `query` tools will appear in the
 tool picker.
@@ -166,6 +177,7 @@ without auth enforcement (never deploy this way).
 |---|---|---|
 | `HTTP 401` | Missing or wrong `X-API-Key` | Verify the key matches what is in Key Vault |
 | `HTTP 405 Method Not Allowed` | Sending `GET` instead of `POST` | Use `POST` with a JSON-RPC body and correct `Accept` header |
+| `not valid MCP server configurations` in Claude Desktop | Used `"type": "http"` directly — Desktop only supports stdio | Use `mcp-remote` via `npx` as shown above |
 | `Not Acceptable` error in JSON-RPC response | Missing `Accept` header | Add `Accept: application/json, text/event-stream` |
 | Tool returns `"Error: MCP context not initialised."` | App started but lifespan did not complete | Check App Service logs for DB connection errors at startup |
 | Tool returns `"Error: Only SELECT statements are permitted."` | Non-SELECT SQL passed to `query` | Use only `SELECT` statements |
