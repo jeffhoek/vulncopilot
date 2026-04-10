@@ -3,7 +3,6 @@ import re
 from dataclasses import dataclass
 
 import asyncpg
-import logfire
 from openai import AsyncOpenAI
 from pydantic_ai import Agent, RunContext
 
@@ -16,11 +15,6 @@ from rag.vector_store import PgVectorStore
 class Deps:
     openai_client: AsyncOpenAI
     vector_store: PgVectorStore
-
-
-logfire.configure()
-logfire.instrument_pydantic_ai()
-logfire.instrument_openai()
 
 
 rag_agent = Agent(
