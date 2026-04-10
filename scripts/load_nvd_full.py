@@ -50,7 +50,7 @@ from scripts.nvd_utils import (
 NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 RESULTS_PER_PAGE = 2000
 EMBEDDING_BATCH_SIZE = 500
-BACKFILL_BATCH_SIZE = 1000
+BACKFILL_BATCH_SIZE = 100
 CHECKPOINT_FILE = Path(__file__).resolve().parent.parent / "data" / "nvd_checkpoint.json"
 DB_RETRY_EXCEPTIONS = (
     ConnectionResetError,
@@ -494,6 +494,7 @@ BACKFILL_MAX_RETRIES = 5
 # Use a conservative limit to stay safely under the cap.
 MAX_TOKENS_PER_REQUEST = 250_000
 CHARS_PER_TOKEN_ESTIMATE = 4
+MAX_CHARS_PER_TEXT = 8000 * 4  # ~8000 tokens per input, model hard limit is 8191
 
 
 async def _embed_with_token_limit(openai_client: AsyncOpenAI, texts: list[str]) -> list[list[float]]:
@@ -503,6 +504,7 @@ async def _embed_with_token_limit(openai_client: AsyncOpenAI, texts: list[str]) 
     current_tokens = 0
 
     for text in texts:
+        text = text[:MAX_CHARS_PER_TEXT]
         est_tokens = len(text) // CHARS_PER_TOKEN_ESTIMATE
         if current_batch and current_tokens + est_tokens > MAX_TOKENS_PER_REQUEST:
             sub_batches.append(current_batch)
@@ -520,7 +522,7 @@ async def _embed_with_token_limit(openai_client: AsyncOpenAI, texts: list[str]) 
             print(f"    Embedding sub-batch {i + 1}/{len(sub_batches)} ({len(batch)} texts)")
         for embed_attempt in range(3):
             try:
-                resp = await openai_client.embeddings.create(model=settings.embedding_model, input=batch)
+                resp = await openai_client.embeddings.create(model=settings.embedding_model, input=batch, timeout=60)
                 all_embeddings.extend(item.embedding for item in resp.data)
                 break
             except Exception as e:
@@ -539,6 +541,7 @@ async def _backfill_batch(dsn: str, openai_client: AsyncOpenAI) -> int:
     for attempt in range(BACKFILL_MAX_RETRIES):
         try:
             conn = await asyncpg.connect(dsn=dsn, timeout=DB_CONNECT_TIMEOUT)
+            await conn.execute("SET statement_timeout = 0")
             await register_vector(conn)
 
             rows = await conn.fetch(
@@ -597,6 +600,7 @@ async def backfill_embeddings() -> None:
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
 
     conn = await asyncpg.connect(dsn=dsn, timeout=DB_CONNECT_TIMEOUT)
+    await conn.execute("SET statement_timeout = 0")
     await register_vector(conn)
     total = await conn.fetchval("SELECT COUNT(*) FROM nvd_vulnerabilities WHERE embedding IS NULL")
     await conn.close()
