@@ -6,6 +6,7 @@ param identityId string
 param identityClientId string
 param acrLoginServer string
 param keyVaultName string
+param logfireEnabled bool = false
 param tags object = {}
 
 var imageRef = '${acrLoginServer}/chainlit-pydanticai-rag:latest'
@@ -104,7 +105,7 @@ resource appService 'Microsoft.Web/sites@2023-12-01' = {
         }
         {
           name: 'LOGFIRE_ENABLED'
-          value: 'true'
+          value: string(logfireEnabled)
         }
         {
           name: 'LOGFIRE_TOKEN'
