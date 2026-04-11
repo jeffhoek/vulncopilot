@@ -182,7 +182,7 @@ az role assignment create \
 
 Use the bash `for` loop with `read` shell built-in to securely enter the env vars:
 ```bash
-for var in ANTHROPIC_API_KEY OPENAI_API_KEY APP_PASSWORD CHAINLIT_AUTH_SECRET PG_DATABASE_URL MCP_API_KEY; do
+for var in ANTHROPIC_API_KEY OPENAI_API_KEY APP_PASSWORD CHAINLIT_AUTH_SECRET PG_DATABASE_URL MCP_API_KEY LOGFIRE_TOKEN; do
   echo "$var" && read -rs $var
 done
 ```
@@ -221,10 +221,20 @@ az keyvault secret set \
   --vault-name kv-chainlit-rag-dev \
   --name mcp-api-key \
   --value "$MCP_API_KEY"
+
+az keyvault secret set \
+  --vault-name kv-chainlit-rag-dev \
+  --name logfire-token \
+  --value "$LOGFIRE_TOKEN"
 ```
 
 > `mcp-api-key` must exist before the pipeline runs — if absent, the App Service
 > will start with a warning and the `/mcp` route will reject all requests with 401.
+
+> `logfire-token` must exist before the pipeline runs — if absent, the App Service
+> will fail to resolve the KV reference and Logfire tracing will not start.
+> Retrieve the token from your Logfire project settings under **API Tokens**.
+> `LOGFIRE_ENABLED` is set to `true` automatically by Bicep — no manual step needed.
 
 Restart the App Service to re-resolve the Key Vault references:
 
@@ -293,6 +303,14 @@ az webapp log tail \
 # 6. WebSocket: open app in browser → DevTools → Network → WS tab → active connection
 
 # 7. Sticky sessions: check browser cookies for ARRAffinity cookie after login
+
+# 8. Logfire KV reference resolved and tracing active
+az webapp config appsettings list \
+  --name app-chainlit-rag-dev \
+  --resource-group rg-chainlit-rag-dev \
+  --query "[?name=='LOGFIRE_TOKEN']" -o table
+# Expected: value shows "@Microsoft.KeyVault(...)" — if "Failed", check KV permissions
+# Then send a message in the app and confirm traces appear at https://logfire.pydantic.dev
 ```
 
 ---

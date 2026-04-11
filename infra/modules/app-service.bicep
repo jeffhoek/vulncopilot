@@ -102,6 +102,14 @@ resource appService 'Microsoft.Web/sites@2023-12-01' = {
           name: 'MCP_API_KEY'
           value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=mcp-api-key)'
         }
+        {
+          name: 'LOGFIRE_ENABLED'
+          value: 'true'
+        }
+        {
+          name: 'LOGFIRE_TOKEN'
+          value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=logfire-token)'
+        }
       ]
     }
   }
