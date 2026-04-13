@@ -18,6 +18,9 @@ param appServicePlanSku string
 @description('Object ID of the pipeline service principal for RBAC assignments')
 param pipelineServicePrincipalObjectId string
 
+@description('Enable Logfire observability (requires logfire-token in Key Vault)')
+param logfireEnabled bool = false
+
 var appName = 'chainlit-rag'
 var tags = {
   environment: environment
@@ -70,6 +73,7 @@ module appService 'modules/app-service.bicep' = {
     identityClientId: identity.outputs.clientId
     acrLoginServer: acr.outputs.loginServer
     keyVaultName: keyVaultName
+    logfireEnabled: logfireEnabled
     tags: tags
   }
 }
