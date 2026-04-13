@@ -6,6 +6,7 @@ param identityId string
 param identityClientId string
 param acrLoginServer string
 param keyVaultName string
+param logfireEnabled bool = false
 param tags object = {}
 
 var imageRef = '${acrLoginServer}/chainlit-pydanticai-rag:latest'
@@ -101,6 +102,14 @@ resource appService 'Microsoft.Web/sites@2023-12-01' = {
         {
           name: 'MCP_API_KEY'
           value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=mcp-api-key)'
+        }
+        {
+          name: 'LOGFIRE_ENABLED'
+          value: string(logfireEnabled)
+        }
+        {
+          name: 'LOGFIRE_TOKEN'
+          value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=logfire-token)'
         }
       ]
     }

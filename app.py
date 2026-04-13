@@ -5,6 +5,13 @@ from chainlit.server import app as fastapi_app
 from openai import AsyncOpenAI
 from pydantic_ai import Agent
 
+if os.getenv("LOGFIRE_ENABLED", "").lower() == "true":
+    import logfire
+
+    logfire.configure()
+    logfire.instrument_pydantic_ai()
+    logfire.instrument_openai()
+
 from config import settings
 from mcp_server.server import McpRouterMiddleware, set_mcp_context
 from rag.agent import Deps, rag_agent
