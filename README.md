@@ -12,6 +12,27 @@ A retrieval-augmented generation chatbot for vulnerability research, built with 
 - **Vendor risk assessment** — identify which vendors have the most known exploited vulnerabilities
 - **DevSecOps** — check project dependencies for known exploited vulnerabilities before shipping
 
+## Why not just use NVD.nist.gov?
+
+NVD is a record browser with filters. This chatbot is an analyst. A few things it can do that the NVD site cannot:
+
+| Capability | NVD site | This chatbot |
+|---|---|---|
+| Cross-reference KEV + NVD in one query | No — separate sites | Yes — JOINed in one DB |
+| Ransomware campaign filtering | No | Yes (`known_ransomware_campaign_use`) |
+| CISA remediation deadline queries | No | Yes (`due_date`, BOD 22-01) |
+| Semantic / conceptual search | No — keyword only | Yes — pgvector embeddings |
+| Aggregations and trend analytics | No | Yes — arbitrary SQL |
+| Temporal calculations (e.g., days from publish → KEV add) | No | Yes |
+| Conversational follow-up across multiple questions | No — resets each search | Yes — session history |
+| Prioritize by multiple signals at once (CVSS + KEV + ransomware + overdue) | No | Yes |
+
+**Example questions NVD can't answer:**
+- *"Which critical Apache vulnerabilities are on the KEV list and linked to ransomware campaigns?"*
+- *"How many days on average elapsed between NVD publication and CISA KEV addition in 2024?"*
+- *"Rank overdue KEV vulnerabilities by CVSS score for the vendors in my environment."*
+- *"Find vulnerabilities conceptually similar to Log4Shell in terms of attack pattern."*
+
 ## Features
 
 - CISA KEV + NVD datasets (~1,500 KEV entries, enriched with CVSS scores from NVD)
