@@ -69,7 +69,7 @@ resource appService 'Microsoft.Web/sites@2023-12-01' = {
         }
         {
           name: 'ACTION_BUTTONS'
-          value: '["What vulnerabilities affect Apache?","Show recent KEV entries","What ransomware campaigns are tracked?","What are the highest CVSS score vulnerabilities?"]'
+          value: '["Show latest KEV additions","Critical vulns with active exploits","Which vendors appear most in KEV?","VPN and remote access vulnerabilities","Ransomware-linked vulnerabilities","Microsoft product vulnerabilities","Network device vulnerabilities","Vulnerabilities added to KEV in 2025","Show unpatched critical vulnerabilities","AI and cloud tool vulnerabilities"]'
         }
         {
           name: 'PG_DATABASE_URL'
