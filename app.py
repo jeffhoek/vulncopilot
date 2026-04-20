@@ -74,14 +74,18 @@ async def on_chat_start() -> None:
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
 
     deps = Deps(openai_client=openai_client, vector_store=vector_store)
+    existing_history = cl.user_session.get("message_history")
     cl.user_session.set("deps", deps)
-    cl.user_session.set("message_history", [])
 
-    doc_count = await vector_store.get_document_count()
-    await cl.Message(
-        content=f"Ready! {doc_count} vulnerability records available.",
-        actions=_quick_query_actions(),
-    ).send()
+    if existing_history is None:
+        cl.user_session.set("message_history", [])
+        doc_count = await vector_store.get_document_count()
+        await cl.Message(
+            content=f"Ready! {doc_count} vulnerability records available.",
+            actions=_quick_query_actions(),
+        ).send()
+    else:
+        cl.user_session.set("message_history", existing_history)
 
 
 @cl.on_message
