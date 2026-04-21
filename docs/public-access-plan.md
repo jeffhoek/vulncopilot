@@ -23,12 +23,15 @@ CREATE TABLE IF NOT EXISTS user_usage (
     UNIQUE (user_identifier, query_date)
 );
 CREATE INDEX IF NOT EXISTS user_usage_date_idx ON user_usage (query_date DESC);
-CREATE INDEX IF NOT EXISTS user_usage_user_idx ON user_usage (user_identifier);
+-- user_identifier-only index omitted: the UNIQUE (user_identifier, query_date) constraint
+-- already creates a B-tree on both columns with user_identifier as the leading key.
+-- PostgreSQL can use that composite index for single-column lookups on user_identifier,
+-- so a second index on user_identifier alone adds write overhead without improving reads.
 ```
 
 The `UNIQUE` constraint enables atomic upserts via `INSERT ... ON CONFLICT DO UPDATE`.
 
-**`user_identifier` format:** always store the GitHub login (e.g. `"jeffhoek"`), not the email. Chainlit sets `cl.User.identifier` to the value returned from `oauth_callback`; our callback sets it to `raw_user_data["login"]` (Step 4). `admin_emails` in config must therefore contain GitHub logins, not email addresses — document this clearly in Step 8.
+**`user_identifier` format:** always store the GitHub login (e.g. `"jeffhoek"`), not the email. Chainlit sets `cl.User.identifier` to the value returned from `oauth_callback`; our callback sets it to `raw_user_data["login"]` (Step 4). Use `cl.user_session.get("user").identifier` consistently everywhere (rate-limit lookup, usage insert). Document this in Step 8.
 
 Applied automatically on next app startup. Can also be applied manually:
 ```bash
@@ -94,13 +97,21 @@ open_registration: bool = False         # True = any OAuth user allowed
 daily_query_limit: int = 20
 
 # Admin Dashboard
-# Must contain GitHub login values (matching user_identifier stored in DB)
-admin_logins: list[str] = []
-admin_secret: str = ""                  # bearer token for /admin; set a strong random value
+admin_secret: str = ""                  # HTTP Basic Auth password for /admin; set a strong random value
+# admin_logins removed — dashboard is protected by admin_secret alone (bearer token),
+# not per-user login checks. If per-user admin ACLs are needed in future, add them then.
 
 # Token Cost Estimation (USD per million tokens)
 llm_input_cost_per_million: float = 0.80
 llm_output_cost_per_million: float = 4.00
+```
+
+Add a startup guard — an empty `admin_secret` would let `Authorization: Basic <base64 of ":">` pass, silently leaving the dashboard open:
+
+```python
+# In app startup (e.g. @cl.on_chat_start or a module-level check):
+if not settings.admin_secret:
+    raise ValueError("ADMIN_SECRET must be set to a non-empty value before starting the app")
 ```
 
 ---
@@ -146,14 +157,24 @@ Chainlit auto-discovers the provider from `OAUTH_GITHUB_*` env vars. Both GitHub
 
 **File:** `app.py`
 
-In `on_message` and the `@cl.action_callback("quick_query")` handler:
+In `on_message` and the `@cl.action_callback("quick_query")` handler, use a two-phase pattern:
 
 ```python
 user_id = cl.user_session.get("user").identifier
 pool = get_pool()
 
-# Run the agent first so we know the real token counts before persisting.
-# check_and_increment is atomic — no TOCTOU race between check and write.
+# Phase 1 — cheap read-only pre-check: avoid spending an LLM call on an already-blocked user.
+row = await pool.fetchrow(
+    "SELECT query_count FROM user_usage WHERE user_identifier = $1 AND query_date = CURRENT_DATE",
+    user_id,
+)
+if row and row["query_count"] >= settings.daily_query_limit:
+    await cl.Message(
+        content=f"You've reached your daily limit of {settings.daily_query_limit} queries. Try again tomorrow."
+    ).send()
+    return
+
+# Phase 2 — run agent, then atomically record usage.
 result = await rag_agent.run(...)
 
 usage = result.usage()
@@ -172,7 +193,7 @@ if not allowed:
 
 `result.usage()` is Pydantic-AI's `RunResult.usage()` — returns `Usage(request_tokens, response_tokens)`. Guard with `or 0` in case the model call doesn't return token counts.
 
-**Note:** the agent runs before the limit check so that token counts are available for the atomic upsert. The practical effect is that a user can run exactly `daily_query_limit` queries per day — the (limit+1)th attempt succeeds at the model level but the response is suppressed and the row is not incremented.
+**TOCTOU trade-off:** there is a window between the pre-check (Phase 1) and the atomic upsert (Phase 2) where two concurrent requests from the same user could both pass the pre-check and both run the LLM. The worst case is one over-limit call per concurrent burst — far better than the previous design where *every* blocked user spent a full LLM call before being told they were over limit. The `check_and_increment` atomic upsert in Phase 2 remains the authoritative gate; the pre-check is an optimisation only.
 
 ---
 
@@ -180,19 +201,32 @@ if not allowed:
 
 **New files:** `admin/__init__.py` (empty), `admin/dashboard.py`, `admin/templates/dashboard.html`
 
-`admin/dashboard.py` uses a simple bearer-token approach instead of decoding Chainlit's JWT (which ties the implementation to Chainlit's internal token format and requires keeping `CHAINLIT_AUTH_SECRET` in sync):
+`admin/dashboard.py` uses HTTP Basic Auth instead of a bearer token. Bearer tokens require the caller to set the `Authorization` header manually — browsers don't do this on normal page navigation, so opening `/admin` in a browser would always 403. HTTP Basic Auth causes the browser to show a native credential prompt, making the dashboard accessible without any frontend JavaScript.
 
 ```python
-from fastapi import Request, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi import Request, Depends, HTTPException
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
+import secrets
 
+security = HTTPBasic()
 templates = Jinja2Templates(directory="admin/templates")  # auto-escapes by default
 
-async def admin_dashboard(request: Request):
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer ") or auth[7:] != settings.admin_secret:
-        raise HTTPException(status_code=403, detail="Forbidden")
+async def admin_dashboard(
+    request: Request,
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    # Use secrets.compare_digest to prevent timing attacks.
+    # Username can be anything; only the password (admin_secret) is checked.
+    ok = secrets.compare_digest(
+        credentials.password.encode(), settings.admin_secret.encode()
+    )
+    if not ok:
+        raise HTTPException(
+            status_code=401,
+            detail="Forbidden",
+            headers={"WWW-Authenticate": "Basic realm=\"Admin\""},
+        )
 
     pool = get_pool()
     rows = await get_usage_stats(
@@ -205,7 +239,7 @@ async def admin_dashboard(request: Request):
 
 `admin/templates/dashboard.html` is a Jinja2 template — use `{{ value | e }}` escaping for all user-derived data. This eliminates the XSS risk of building HTML via f-strings and makes the template maintainable.
 
-**Auth pattern:** the caller (browser, curl, monitoring script) passes `Authorization: Bearer <admin_secret>`. Set `ADMIN_SECRET` to a strong random value (e.g. `openssl rand -hex 32`). This avoids `python-jose` and any coupling to Chainlit internals.
+**Auth pattern:** navigate to `/admin` in any browser — the browser prompts for a username and password. Leave the username blank (or anything); set the password to `ADMIN_SECRET`. `curl` usage: `curl -u :$ADMIN_SECRET https://your-domain/admin`. Set `ADMIN_SECRET` to a strong random value (e.g. `openssl rand -hex 32`). This avoids `python-jose` and any coupling to Chainlit internals.
 
 **Wire into `app.py`** at module level (after middleware setup):
 ```python
@@ -248,8 +282,7 @@ OPEN_REGISTRATION=false
 # Rate Limiting
 DAILY_QUERY_LIMIT=20
 
-# Admin Dashboard
-# ADMIN_LOGINS=jeffhoek          (GitHub logins; must match user_identifier in DB)
+# Admin Dashboard — HTTP Basic Auth password for /admin
 # ADMIN_SECRET=                  (strong random value, e.g. openssl rand -hex 32)
 ```
 
@@ -289,8 +322,9 @@ Recommended starting values based on expected LLM cost per query. E.g. at ~$0.01
 - [ ] Login with allowed account → lands in chat
 - [ ] Login with disallowed account → denied (if allow-list configured)
 - [ ] Send queries up to the limit → 21st query returns limit message
-- [ ] `/admin` as admin email → usage table renders
-- [ ] `/admin` as non-admin → 403
+- [ ] Navigate to `/admin` in browser → Basic Auth credential prompt appears
+- [ ] Enter correct `ADMIN_SECRET` as password → usage table renders
+- [ ] Enter wrong password → 401
 - [ ] `SELECT * FROM user_usage;` in psql shows rows after queries
 - [ ] Token counts in DB are non-zero
 
