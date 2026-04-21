@@ -10,6 +10,9 @@
 | [deploy-gcp-cloud-run.md](deploy-gcp-cloud-run.md) | Deploy to Google Cloud Run |
 | [eks-runbook.md](eks-runbook.md) | Deploy to AWS EKS using GitHub Actions CI/CD |
 | [langfuse-setup.md](langfuse-setup.md) | Set up self-hosted Langfuse observability alongside the chatbot via Podman Compose |
+| [logfire-setup.md](logfire-setup.md) | Set up Logfire observability for cloud-hosted tracing and monitoring |
+| [mcp-server.md](mcp-server.md) | MCP server setup — exposes `retrieve` and `query` tools at `/mcp` for external agents |
+| [mcp-server-azure.md](mcp-server-azure.md) | MCP server configuration for Azure App Service deployments |
 | [action-buttons.md](action-buttons.md) | Configure Chainlit action buttons on the welcome message for quick-access suggested questions |
 | [postgres-hosting-options.md](postgres-hosting-options.md) | PostgreSQL hosting options evaluated for the full NVD dataset (~250k CVEs) with pgvector |
 | [future-enhancements.md](future-enhancements.md) | Potential improvements and feature additions |

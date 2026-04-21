@@ -41,8 +41,9 @@ NVD is a record browser with filters. This chatbot is an analyst. A few things i
 - Two agent tools: `retrieve` (semantic search) and `query` (direct SQL)
 - Claude LLM via Pydantic AI agent
 - Chainlit web interface with authentication
-- MCP server at `/mcp` — exposes `retrieve` and `query` to external agents (Azure deployment)
-- Langfuse observability (optional, self-hosted via Compose)
+- MCP server at `/mcp` — exposes `retrieve` and `query` to external agents — see [docs/mcp-server.md](docs/mcp-server.md)
+- Langfuse observability (optional, self-hosted via Compose) — see [docs/langfuse-setup.md](docs/langfuse-setup.md)
+- Logfire observability (optional, cloud-hosted tracing) — see [docs/logfire-setup.md](docs/logfire-setup.md)
 
 ## Requirements
 
@@ -231,20 +232,6 @@ Then open http://localhost:8080.
 | [docs/deploy-azure-app-service.md](docs/deploy-azure-app-service.md) | Deploy to Azure App Service as a Linux container, using ACR, Key Vault, Timescale Cloud, and Azure Pipelines — includes MCP server setup |
 | [docs/deploy-gcp-cloud-run.md](docs/deploy-gcp-cloud-run.md) | Deploy to Google Cloud Run |
 | [docs/eks-runbook.md](docs/eks-runbook.md) | Deploy to AWS EKS using GitHub Actions CI/CD |
-
-## Architecture
-
-```
-CISA KEV API ─┐
-              ├─→ ETL scripts → OpenAI Embeddings → PostgreSQL/pgvector
-NVD API ──────┘                                            ↓
-                                              ┌─ retrieve (semantic search)
-User → Chainlit → Pydantic AI Agent ──────────┤
-                         ↓                    └─ query (direct SQL)
-                       Claude                        ↑
-                                        MCP clients (external agents)
-                                        └─ /mcp  (Streamable HTTP, API key auth)
-```
 
 ## Further Reading
 
