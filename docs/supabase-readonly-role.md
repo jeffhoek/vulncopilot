@@ -110,7 +110,7 @@ Find the base connection string under **Project Settings → Database → Connec
 | Use case | Port | Username format |
 |---|---|---|
 | Live app (`app_readonly`) | 6543 (pooler) | `app_readonly.<project-ref>` |
-| ETL scripts (`app_etl`) | 6543 (pooler) | `app_etl.<project-ref>` |
+| ETL scripts (`app_etl`) | 6543 (pooler) or 5432 (session mode) | `app_etl.<project-ref>` |
 | Schema setup / migrations | 5432 (direct) | `postgres.<project-ref>` |
 
 ## Part 4 — Update `.env`
