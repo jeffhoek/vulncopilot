@@ -15,6 +15,7 @@
 | [mcp-server-azure.md](mcp-server-azure.md) | MCP server configuration for Azure App Service deployments |
 | [action-buttons.md](action-buttons.md) | Configure Chainlit action buttons on the welcome message for quick-access suggested questions |
 | [postgres-hosting-options.md](postgres-hosting-options.md) | PostgreSQL hosting options evaluated for the full NVD dataset (~250k CVEs) with pgvector |
+| [supabase-readonly-role.md](supabase-readonly-role.md) | Role-based access control in Supabase — `app_readonly` (SELECT only) for the live app, `app_etl` (SELECT/INSERT/UPDATE, no DELETE or DDL) for ETL scripts, admin reserved for schema changes |
 | [future-enhancements.md](future-enhancements.md) | Potential improvements and feature additions |
 
 
