@@ -20,6 +20,20 @@ Ingest supplementary vulnerability intelligence such as:
 - **Exploit-DB** — proof-of-concept exploit availability
 - **Vendor-specific advisories** — Microsoft, Cisco, Adobe, etc.
 
+### Reference URL Content Scraping
+
+NVD stores up to ten `reference_urls` per CVE pointing to vendor advisories, patch notes,
+proof-of-concept write-ups, and security blog posts. Scrape those pages and store the
+extracted text in a dedicated `cve_references` table (columns: `url`, `cve_id`, `title`,
+`scraped_text`, `embedding`). Index the embeddings with pgvector so RAG retrieval can
+surface relevant reference snippets alongside core CVE data. Considerations:
+
+- Filter low-value URLs at ingest time (dead links, paywalled pages, NVD self-referential
+  links, social media)
+- Summarize long pages with an LLM call before embedding to keep chunk quality high
+- Respect `robots.txt` and rate-limit scraping to avoid being blocked by vendor sites
+- Re-scrape on a schedule so content stays current as advisories are updated
+
 ### Software Inventory Matching
 
 Allow users to upload a Software Bill of Materials (SBOM) or CPE list and
