@@ -178,6 +178,7 @@ To revoke a role entirely if credentials are compromised:
 -- Revoke app_readonly
 REVOKE ALL ON kev_vulnerabilities FROM app_readonly;
 REVOKE ALL ON nvd_vulnerabilities FROM app_readonly;
+REVOKE USAGE ON SCHEMA public FROM app_readonly;
 REVOKE CONNECT ON DATABASE postgres FROM app_readonly;
 DROP ROLE app_readonly;
 
