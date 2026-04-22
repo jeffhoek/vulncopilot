@@ -127,7 +127,7 @@ Keep the ETL and admin connection strings in a separate file (e.g., `.env.etl`) 
 PG_DATABASE_URL=postgresql://app_etl.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres?sslmode=require
 
 # Schema setup only — admin role (direct connection, port 5432)
-# PG_DATABASE_URL=postgresql://postgres.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require
+# PG_DATABASE_URL=postgresql://postgres.<project-ref>:<password>@db.<project-ref>.supabase.co:5432/postgres?sslmode=require
 ```
 
 ---
