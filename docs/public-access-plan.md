@@ -31,7 +31,7 @@ CREATE INDEX IF NOT EXISTS user_usage_date_idx ON user_usage (query_date DESC);
 
 The `UNIQUE` constraint enables atomic upserts via `INSERT ... ON CONFLICT DO UPDATE`.
 
-**`user_identifier` format:** always store the GitHub login (e.g. `"jeffhoek"`), not the email. Chainlit sets `cl.User.identifier` to the value returned from `oauth_callback`; our callback sets it to `raw_user_data["login"]` (Step 4). Use `cl.user_session.get("user").identifier` consistently everywhere (rate-limit lookup, usage insert). Document this in Step 8.
+**`user_identifier` format:** always store the stable numeric GitHub ID (e.g. `"github:12345678"`), not the login. GitHub usernames are mutable — a rename orphans all prior usage rows and resets the counter. Use `f"github:{raw_user_data['id']}"` in `oauth_callback` (Step 4). Chainlit sets `cl.User.identifier` to the value returned from `oauth_callback`; use `cl.user_session.get("user").identifier` consistently everywhere (rate-limit lookup, usage insert). Document this in Step 8.
 
 Applied automatically on next app startup. Can also be applied manually:
 ```bash
@@ -54,14 +54,11 @@ Three async functions, all accept `pool` (existing asyncpg pool from `rag.databa
 `check_and_increment` collapses the former `check_rate_limit` + `increment_usage` into a single atomic SQL statement to eliminate the check-then-act race condition where two concurrent requests could both pass the limit check before either increments the counter:
 
 ```sql
--- Returns the new query_count after the upsert, or NULL if already at/over limit
 WITH upserted AS (
     INSERT INTO user_usage (user_identifier, query_date, query_count, input_tokens, output_tokens)
     VALUES ($1, CURRENT_DATE, 1, $2, $3)
     ON CONFLICT (user_identifier, query_date) DO UPDATE SET
-        query_count   = CASE WHEN user_usage.query_count < $4
-                             THEN user_usage.query_count + 1
-                             ELSE user_usage.query_count END,
+        query_count   = user_usage.query_count + 1,          -- always increment for audit trail
         input_tokens  = CASE WHEN user_usage.query_count < $4
                              THEN user_usage.input_tokens + EXCLUDED.input_tokens
                              ELSE user_usage.input_tokens END,
@@ -73,7 +70,7 @@ WITH upserted AS (
 SELECT query_count <= lim AS allowed, query_count FROM upserted
 ```
 
-`$4` is the limit. If `allowed` is `False`, the row was not incremented (the CASE guards ensure idempotency at the boundary).
+`$4` is the limit. `query_count` is always incremented so over-limit calls are visible in the DB for abuse auditing; cap the display value in the dashboard template. The token CASE guards prevent accumulating tokens for blocked requests. On the 21st call `query_count` returns 21 and `21 <= 20 = false` correctly blocks it.
 
 ---
 
@@ -106,10 +103,10 @@ llm_input_cost_per_million: float = 0.80
 llm_output_cost_per_million: float = 4.00
 ```
 
-Add a startup guard — an empty `admin_secret` would let `Authorization: Basic <base64 of ":">` pass, silently leaving the dashboard open:
+Add a module-level startup guard — an empty `admin_secret` would let `Authorization: Basic <base64 of ":">` pass, silently leaving the dashboard open. A module-level check fails the process immediately during `chainlit run app.py`, before any user can reach the app (unlike `@cl.on_chat_start`, which fires per session and would leave the dashboard exposed until the first user connects):
 
 ```python
-# In app startup (e.g. @cl.on_chat_start or a module-level check):
+# In app.py, at module level (outside any handler):
 if not settings.admin_secret:
     raise ValueError("ADMIN_SECRET must be set to a non-empty value before starting the app")
 ```
@@ -130,15 +127,20 @@ logger = logging.getLogger(__name__)
 @cl.oauth_callback
 def oauth_callback(provider_id, token, raw_user_data, default_user):
     email = raw_user_data.get("email", "")
-    login = raw_user_data.get("login", "")  # GitHub username
+    login = raw_user_data.get("login", "")  # GitHub username (mutable — for allow-list matching only)
+    user_id = f"github:{raw_user_data['id']}"  # stable numeric ID — never changes on rename
 
     if settings.open_registration:
+        default_user.identifier = user_id
         return default_user
     if email and email in settings.allowed_emails:
+        default_user.identifier = user_id
         return default_user
     if email and any(email.endswith(f"@{d}") for d in settings.allowed_email_domains):
+        default_user.identifier = user_id
         return default_user
     if login and login in settings.allowed_logins:
+        default_user.identifier = user_id
         return default_user
 
     logger.warning("OAuth denied: provider=%s login=%s email=%s", provider_id, login, email)
@@ -193,7 +195,7 @@ if not allowed:
 
 `result.usage()` is Pydantic-AI's `RunResult.usage()` — returns `Usage(request_tokens, response_tokens)`. Guard with `or 0` in case the model call doesn't return token counts.
 
-**TOCTOU trade-off:** there is a window between the pre-check (Phase 1) and the atomic upsert (Phase 2) where two concurrent requests from the same user could both pass the pre-check and both run the LLM. The worst case is one over-limit call per concurrent burst — far better than the previous design where *every* blocked user spent a full LLM call before being told they were over limit. The `check_and_increment` atomic upsert in Phase 2 remains the authoritative gate; the pre-check is an optimisation only.
+**TOCTOU trade-off:** there is a window between the pre-check (Phase 1) and the atomic upsert (Phase 2) where concurrent requests from the same user could both pass the pre-check and both run the LLM. The worst case is one extra LLM call **per concurrent inflight request** at the limit boundary — if N requests arrive when a user is at `count = limit - 1`, all N pass Phase 1 before any has incremented the counter. For a typical single-browser-tab UI this is rarely more than one or two. This is far better than the previous design where *every* blocked user spent a full LLM call before being denied. The `check_and_increment` atomic upsert in Phase 2 remains the authoritative gate; the pre-check is a best-effort optimisation only.
 
 ---
 
@@ -241,6 +243,8 @@ async def admin_dashboard(
 
 **Auth pattern:** navigate to `/admin` in any browser — the browser prompts for a username and password. Leave the username blank (or anything); set the password to `ADMIN_SECRET`. `curl` usage: `curl -u :$ADMIN_SECRET https://your-domain/admin`. Set `ADMIN_SECRET` to a strong random value (e.g. `openssl rand -hex 32`). This avoids `python-jose` and any coupling to Chainlit internals.
 
+**HTTPS is required.** HTTP Basic Auth encodes credentials as base64 plaintext — without TLS the `ADMIN_SECRET` is trivially readable on the wire. On Azure App Service, enforce HTTPS-only in the TLS/SSL settings. On GCP Cloud Run, HTTPS is the default; block HTTP via ingress settings. Never expose `/admin` over plain HTTP.
+
 **Wire into `app.py`** at module level (after middleware setup):
 ```python
 from chainlit.server import app as fastapi_app
@@ -269,6 +273,7 @@ APP_PASSWORD
 # OAuth — GitHub
 OAUTH_GITHUB_CLIENT_ID=
 OAUTH_GITHUB_CLIENT_SECRET=
+CHAINLIT_AUTH_SECRET=           # required for OAuth sessions — generate with: openssl rand -hex 32
 # OAuth — Google (optional, can coexist with GitHub)
 # OAUTH_GOOGLE_CLIENT_ID=
 # OAUTH_GOOGLE_CLIENT_SECRET=
