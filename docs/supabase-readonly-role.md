@@ -123,7 +123,8 @@ PG_DATABASE_URL=postgresql://app_readonly.<project-ref>:<password>@aws-0-<region
 Keep the ETL and admin connection strings in a separate file (e.g., `.env.etl`) or CI/CD secrets:
 
 ```dotenv
-# ETL scripts — app_etl role (transaction pooler, port 6543)
+# ETL scripts — app_etl role (session pooler / direct, port 5432 — avoids prepared-statement limits)
+PG_DATABASE_URL=postgresql://app_etl.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require
 PG_DATABASE_URL=postgresql://app_etl.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres?sslmode=require
 
 # Schema setup only — admin role (direct connection, port 5432)
