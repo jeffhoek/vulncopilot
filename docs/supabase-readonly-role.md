@@ -182,13 +182,14 @@ REVOKE USAGE ON SCHEMA public FROM app_readonly;
 REVOKE CONNECT ON DATABASE postgres FROM app_readonly;
 DROP ROLE app_readonly;
 DROP ROLE app_readonly;
-
 -- Revoke app_etl
 REVOKE ALL ON kev_vulnerabilities FROM app_etl;
 REVOKE ALL ON nvd_vulnerabilities FROM app_etl;
 REVOKE ALL ON SEQUENCE kev_vulnerabilities_id_seq FROM app_etl;
 REVOKE ALL ON SEQUENCE nvd_vulnerabilities_id_seq FROM app_etl;
+REVOKE USAGE ON SCHEMA public FROM app_etl;
 REVOKE CONNECT ON DATABASE postgres FROM app_etl;
+DROP ROLE app_etl;
 DROP ROLE app_etl;
 ```
 
