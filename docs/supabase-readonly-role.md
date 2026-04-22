@@ -45,7 +45,12 @@ GRANT SELECT ON kev_vulnerabilities TO app_readonly;
 GRANT SELECT ON nvd_vulnerabilities TO app_readonly;
 ```
 
-Only these two tables are granted — no wildcard `ALL TABLES`. Any new table added later requires an explicit grant before `app_readonly` can read it.
+Only these two tables are granted — no wildcard `ALL TABLES`. Any new table added later requires an explicit grant before `app_readonly` can read it. ALTER DEFAULT PRIVILEGES is an optional way to automate this for future tables:
+
+```sql
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT SELECT ON TABLES TO app_readonly;
+```
 
 ### Step 6 — Row Level Security note
 
@@ -58,6 +63,12 @@ CREATE POLICY "app_readonly_select" ON kev_vulnerabilities
 
 CREATE POLICY "app_readonly_select" ON nvd_vulnerabilities
   FOR SELECT TO app_readonly USING (true);
+
+CREATE POLICY "app_etl_write" ON kev_vulnerabilities
+  FOR ALL TO app_etl USING (true) WITH CHECK (true);
+
+CREATE POLICY "app_etl_write" ON nvd_vulnerabilities
+  FOR ALL TO app_etl USING (true) WITH CHECK (true);
 ```
 
 ---
@@ -85,6 +96,8 @@ GRANT SELECT, INSERT, UPDATE ON nvd_vulnerabilities TO app_etl;
 ```
 
 `DELETE` is intentionally excluded. The ETL scripts use upserts (`INSERT ... ON CONFLICT DO UPDATE`), so DELETE is never needed. A compromised ETL credential cannot wipe vulnerability data.
+
+The `vector` type used for embeddings is provided by the pgvector extension (installed in the `extensions` schema by Supabase), but the type is accessible from `public` without any additional grants to `app_etl`.
 
 ### Step 10 — Grant sequence usage
 
@@ -123,9 +136,11 @@ PG_DATABASE_URL=postgresql://app_readonly.<project-ref>:<password>@aws-0-<region
 Keep the ETL and admin connection strings in a separate file (e.g., `.env.etl`) or CI/CD secrets:
 
 ```dotenv
-# ETL scripts — app_etl role (session pooler / direct, port 5432 — avoids prepared-statement limits)
+# Session mode (port 5432) — avoids prepared-statement limits, recommended for ETL
 PG_DATABASE_URL=postgresql://app_etl.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require
-PG_DATABASE_URL=postgresql://app_etl.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres?sslmode=require
+
+# OR transaction pooler (port 6543) — use only if session mode is unavailable
+# PG_DATABASE_URL=postgresql://app_etl.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres?sslmode=require
 
 # Schema setup only — admin role (direct connection, port 5432)
 # PG_DATABASE_URL=postgresql://postgres.<project-ref>:<password>@db.<project-ref>.supabase.co:5432/postgres?sslmode=require
