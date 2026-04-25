@@ -26,6 +26,8 @@ CREATE ROLE app_readonly WITH LOGIN PASSWORD 'replace-with-strong-password';
 
 > Use a strong, unique password. Store it in a secrets manager (e.g., Azure Key Vault, AWS Secrets Manager, GCP Secret Manager) — not in a `.env` file committed to git.
 
+> **Supabase/Supavisor gotcha:** `CREATE ROLE ... PASSWORD` writes to PostgreSQL but Supavisor (the pooler) may not sync the credential immediately. If you get `password authentication failed` on the session pooler despite the password being correct, run `ALTER ROLE app_readonly PASSWORD 'same-password';` in the SQL Editor — this triggers a fresh write that the pooler picks up.
+
 ### Step 3 — Grant database connect
 
 ```sql
@@ -80,6 +82,8 @@ CREATE POLICY "app_etl_write" ON nvd_vulnerabilities
 ```sql
 CREATE ROLE app_etl WITH LOGIN PASSWORD 'replace-with-strong-password';
 ```
+
+> **Supabase/Supavisor gotcha:** Same as `app_readonly` — immediately follow with `ALTER ROLE app_etl PASSWORD 'same-password';` to ensure the pooler syncs the credential before you test the connection.
 
 ### Step 8 — Grant database connect and schema usage
 
