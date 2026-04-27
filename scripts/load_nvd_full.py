@@ -264,6 +264,7 @@ async def upsert_with_retry(dsn: str, cve_records: list[dict], embeddings: list[
         try:
             conn = await asyncpg.connect(dsn=dsn, timeout=DB_CONNECT_TIMEOUT)
             await register_vector(conn)
+            await conn.execute("SET statement_timeout = 0")
             await upsert_batch(conn, cve_records, embeddings)
             await conn.close()
             return
@@ -278,14 +279,21 @@ async def upsert_with_retry(dsn: str, cve_records: list[dict], embeddings: list[
 # -- Embeddings --
 
 
-async def generate_embeddings(openai_client: AsyncOpenAI, texts: list[str]) -> list[list[float]]:
+async def generate_embeddings(
+    openai_client: AsyncOpenAI,
+    texts: list[str],
+    already_loaded: int = 0,
+    total: int = 0,
+) -> list[list[float]]:
     """Generate embeddings in batches, splitting further if needed to stay under token limits."""
     all_embeddings: list[list[float]] = []
     for i in range(0, len(texts), EMBEDDING_BATCH_SIZE):
         batch = texts[i : i + EMBEDDING_BATCH_SIZE]
         batch_embeddings = await _embed_with_token_limit(openai_client, batch)
         all_embeddings.extend(batch_embeddings)
-        print(f"  Embedded {min(i + EMBEDDING_BATCH_SIZE, len(texts))}/{len(texts)}")
+        batch_done = already_loaded + min(i + EMBEDDING_BATCH_SIZE, len(texts))
+        suffix = f"/{total}" if total else ""
+        print(f"  Embedded {batch_done}{suffix}")
     return all_embeddings
 
 
@@ -293,15 +301,20 @@ async def embed_and_upsert(
     dsn: str,
     cve_records: list[dict],
     openai_client: AsyncOpenAI | None,
+    already_loaded: int = 0,
+    total: int = 0,
 ) -> int:
     """Generate embeddings (if client provided) and upsert records. Returns count loaded."""
+    suffix = f"/{total}" if total else ""
     embeddings = None
     if openai_client and cve_records:
         contents = [build_content(cve) for cve in cve_records]
-        print(f"  Generating embeddings for {len(cve_records)} records...")
-        embeddings = await generate_embeddings(openai_client, contents)
+        end = already_loaded + len(cve_records)
+        print(f"  Generating embeddings for records {already_loaded + 1}–{end}{suffix}...")
+        embeddings = await generate_embeddings(openai_client, contents, already_loaded=already_loaded, total=total)
 
-    print(f"  Upserting {len(cve_records)} records...")
+    end = already_loaded + len(cve_records)
+    print(f"  Upserting records {already_loaded + 1}–{end}{suffix}...")
     await upsert_with_retry(dsn, cve_records, embeddings)
     return len(cve_records)
 
@@ -438,7 +451,7 @@ async def _sync_window(
             break
 
         cve_records = parse_cve_records(vulnerabilities)
-        loaded += await embed_and_upsert(dsn, cve_records, openai_client)
+        loaded += await embed_and_upsert(dsn, cve_records, openai_client, already_loaded=loaded, total=total_in_window)
         current_index += RESULTS_PER_PAGE
 
         if current_index >= total_in_window:
