@@ -6,6 +6,7 @@ A RAG chatbot built with Pydantic AI and Chainlit that indexes CISA KEV and NIST
 
 - [Data loading (ETL)](docs/data-loading.md)
 - [NVD integration](docs/nvd-integration.md)
+- [CWE integration](docs/cwe-integration.md)
 - [pgvector migration](docs/pgvector-migration.md)
 - [Deployment: Azure](docs/deploy-azure-app-service.md), [GCP](docs/deploy-gcp-cloud-run.md), [EKS](docs/eks-runbook.md)
 - [Langfuse observability](docs/langfuse-setup.md)
