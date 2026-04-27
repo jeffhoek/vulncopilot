@@ -114,28 +114,19 @@ async def upsert_records(conn: asyncpg.Connection, vulns: list[dict], embeddings
 async def main() -> None:
     print("Starting CISA KEV ETL...")
 
-    # Fetch data
     vulns = await fetch_kev_data()
     if not vulns:
         print("No vulnerabilities found. Exiting.")
         return
 
-    # Build content strings
     contents = [build_content(v) for v in vulns]
 
-    # Generate embeddings
     print("Generating embeddings...")
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
     embeddings = await generate_embeddings(openai_client, contents)
 
-    # Connect and load
     print("Connecting to PostgreSQL...")
     conn = await asyncpg.connect(dsn=settings.get_database_dsn())
-
-    # Create extension and table before registering the vector codec
-    from rag.database import SCHEMA_SQL
-
-    await conn.execute(SCHEMA_SQL)
     await register_vector(conn)
 
     print("Upserting records...")
