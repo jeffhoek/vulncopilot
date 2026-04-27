@@ -60,6 +60,14 @@ CREATE INDEX IF NOT EXISTS nvd_raw_json_gin_idx
 
 CREATE INDEX IF NOT EXISTS nvd_vuln_status_idx
     ON nvd_vulnerabilities ((raw_json->>'vulnStatus'));
+
+CREATE TABLE IF NOT EXISTS cwe_definitions (
+    cwe_id      VARCHAR(20) PRIMARY KEY,
+    name        TEXT NOT NULL,
+    abstraction VARCHAR(20),
+    description TEXT,
+    url         TEXT
+);
 """
 
 

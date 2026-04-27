@@ -5,7 +5,7 @@ Create dedicated PostgreSQL roles for the live app and ETL processes, keeping th
 | Role | Purpose | Privileges |
 |---|---|---|
 | `postgres` (admin) | Schema setup and migrations | Full DDL + DML |
-| `app_etl` (new) | ETL scripts (`load_kev.py`, `load_nvd.py`) | SELECT, INSERT, UPDATE — no DELETE, no DDL |
+| `app_etl` (new) | ETL scripts (`load_kev.py`, `load_nvd.py`, `load_cwe.py`) | SELECT, INSERT, UPDATE — no DELETE, no DDL |
 | `app_readonly` (new) | Live app at runtime | SELECT only |
 
 No role can do what the other cannot — a compromised ETL credential cannot wipe data, and a compromised app credential cannot modify data at all.
@@ -40,14 +40,15 @@ GRANT CONNECT ON DATABASE postgres TO app_readonly;
 GRANT USAGE ON SCHEMA public TO app_readonly;
 ```
 
-### Step 5 — Grant SELECT on the two tables
+### Step 5 — Grant SELECT on tables
 
 ```sql
 GRANT SELECT ON kev_vulnerabilities TO app_readonly;
 GRANT SELECT ON nvd_vulnerabilities TO app_readonly;
+GRANT SELECT ON cwe_definitions TO app_readonly;
 ```
 
-Only these two tables are granted — no wildcard `ALL TABLES`. Any new table added later requires an explicit grant before `app_readonly` can read it. ALTER DEFAULT PRIVILEGES is an optional way to automate this for future tables:
+Only these tables are granted — no wildcard `ALL TABLES`. Any new table added later requires an explicit grant before `app_readonly` can read it. ALTER DEFAULT PRIVILEGES is an optional way to automate this for future tables:
 
 ```sql
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
@@ -66,10 +67,16 @@ CREATE POLICY "app_readonly_select" ON kev_vulnerabilities
 CREATE POLICY "app_readonly_select" ON nvd_vulnerabilities
   FOR SELECT TO app_readonly USING (true);
 
+CREATE POLICY "app_readonly_select" ON cwe_definitions
+  FOR SELECT TO app_readonly USING (true);
+
 CREATE POLICY "app_etl_write" ON kev_vulnerabilities
   FOR ALL TO app_etl USING (true) WITH CHECK (true);
 
 CREATE POLICY "app_etl_write" ON nvd_vulnerabilities
+  FOR ALL TO app_etl USING (true) WITH CHECK (true);
+
+CREATE POLICY "app_etl_write" ON cwe_definitions
   FOR ALL TO app_etl USING (true) WITH CHECK (true);
 ```
 
@@ -92,11 +99,12 @@ GRANT CONNECT ON DATABASE postgres TO app_etl;
 GRANT USAGE ON SCHEMA public TO app_etl;
 ```
 
-### Step 9 — Grant SELECT, INSERT, UPDATE on the two tables
+### Step 9 — Grant SELECT, INSERT, UPDATE on tables
 
 ```sql
 GRANT SELECT, INSERT, UPDATE ON kev_vulnerabilities TO app_etl;
 GRANT SELECT, INSERT, UPDATE ON nvd_vulnerabilities TO app_etl;
+GRANT SELECT, INSERT, UPDATE ON cwe_definitions TO app_etl;
 ```
 
 `DELETE` is intentionally excluded. The ETL scripts use upserts (`INSERT ... ON CONFLICT DO UPDATE`), so DELETE is never needed. A compromised ETL credential cannot wipe vulnerability data.
@@ -105,7 +113,7 @@ The `vector` type used for embeddings is provided by the pgvector extension (ins
 
 ### Step 10 — Grant sequence usage
 
-The `id` serial columns require sequence access for INSERTs:
+The `id` serial columns require sequence access for INSERTs. `cwe_definitions` uses a natural VARCHAR primary key and has no serial sequence.
 
 ```sql
 GRANT USAGE ON SEQUENCE kev_vulnerabilities_id_seq TO app_etl;
@@ -160,7 +168,7 @@ Run these checks in the Supabase SQL Editor:
 -- Confirm grants for both roles
 SELECT grantee, table_name, privilege_type
 FROM information_schema.role_table_grants
-WHERE table_name IN ('kev_vulnerabilities', 'nvd_vulnerabilities')
+WHERE table_name IN ('kev_vulnerabilities', 'nvd_vulnerabilities', 'cwe_definitions')
   AND grantee IN ('app_readonly', 'app_etl')
 ORDER BY grantee, table_name, privilege_type;
 
@@ -198,12 +206,14 @@ To revoke a role entirely if credentials are compromised:
 -- Revoke app_readonly
 REVOKE ALL ON kev_vulnerabilities FROM app_readonly;
 REVOKE ALL ON nvd_vulnerabilities FROM app_readonly;
+REVOKE ALL ON cwe_definitions FROM app_readonly;
 REVOKE USAGE ON SCHEMA public FROM app_readonly;
 REVOKE CONNECT ON DATABASE postgres FROM app_readonly;
 DROP ROLE app_readonly;
 -- Revoke app_etl
 REVOKE ALL ON kev_vulnerabilities FROM app_etl;
 REVOKE ALL ON nvd_vulnerabilities FROM app_etl;
+REVOKE ALL ON cwe_definitions FROM app_etl;
 REVOKE ALL ON SEQUENCE kev_vulnerabilities_id_seq FROM app_etl;
 REVOKE ALL ON SEQUENCE nvd_vulnerabilities_id_seq FROM app_etl;
 REVOKE USAGE ON SCHEMA public FROM app_etl;
