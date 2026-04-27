@@ -216,14 +216,11 @@ async def main() -> None:
     rate_info = "with API key (50 req/30s)" if NVD_API_KEY else "without API key (5 req/30s)"
     print(f"  Rate limiting: {rate_info}")
 
-    # Connect to database for initial setup and ID queries, then close.
+    # Connect to database for ID queries, then close.
     # Connection is reopened per batch to avoid idle timeout on long fetches.
     print("Connecting to PostgreSQL...")
     dsn = settings.get_database_dsn()
     conn = await asyncpg.connect(dsn=dsn)
-    from rag.database import SCHEMA_SQL
-
-    await conn.execute(SCHEMA_SQL)
     await register_vector(conn)
 
     # Get CVE IDs from KEV table
