@@ -118,6 +118,32 @@ Already-processed records will upsert harmlessly.
    caffeinate -i uv run python scripts/load_nvd_full.py --incremental
    ```
 
+**HNSW index and large incremental syncs:**
+
+NVD modifies thousands of CVEs per week for routine metadata refreshes (CVSS rescoring, CPE updates, etc.), so large incremental windows can involve 20k–80k upserts. Maintaining the HNSW vector index on every batch causes significant Disk IO — on constrained hosting (e.g. Supabase Micro) this can make each 2,000-row batch take several minutes.
+
+For large syncs (roughly monthly or after a long gap), drop the index before running and rebuild it afterward:
+
+```sql
+-- Before ETL
+DROP INDEX IF EXISTS nvd_embedding_idx;
+```
+
+```bash
+caffeinate -i uv run python scripts/load_nvd_full.py --incremental
+```
+
+```sql
+-- After ETL — rebuilding once from scratch is faster than incremental updates
+CREATE INDEX nvd_embedding_idx
+    ON nvd_vulnerabilities
+    USING hnsw (embedding vector_cosine_ops);
+```
+
+The rebuild takes 30–90 minutes on ~346k rows at 1536 dimensions (varies by compute). The chatbot's semantic search is unavailable during this window but the app remains up.
+
+For smaller weekly syncs the index overhead is usually tolerable — skip the drop/rebuild unless upsert batches start taking several minutes.
+
 ## NVD API Key
 
 All NVD scripts benefit from an API key, which increases the rate limit from 5 to 50 requests per 30 seconds. Set `NVD_API_KEY` in `.env`. Request a free key at https://nvd.nist.gov/developers/request-an-api-key.
@@ -142,7 +168,10 @@ uv run python scripts/load_nvd.py
 **Full NVD** (incremental sync):
 
 ```bash
-uv run python scripts/load_nvd_full.py --incremental
+# Weekly — index overhead is usually fine
+caffeinate -i uv run python scripts/load_nvd_full.py --incremental
+
+# Monthly / large gap — drop HNSW index first, rebuild after (see above)
 ```
 
 No app restart is needed — data is queried live from the database.
