@@ -68,8 +68,11 @@ Fetches the entire NVD (~280k CVEs) via paginated bulk API calls. This is a larg
 # Full load — fetches all CVEs, generates embeddings
 uv run python scripts/load_nvd_full.py
 
-# Incremental sync — fetches only CVEs modified since last run
+# Incremental sync — fetches only CVEs published or modified since last run
 uv run python scripts/load_nvd_full.py --incremental
+
+# Override start date — use after an interrupted incremental run
+uv run python scripts/load_nvd_full.py --incremental --since 2026-04-14
 
 # Data only, skip embedding generation (faster initial load)
 uv run python scripts/load_nvd_full.py --skip-embeddings
@@ -83,9 +86,20 @@ uv run python scripts/load_nvd_full.py --limit 3
 
 **Features:**
 - Paginated bulk fetching (2,000 CVEs per page)
-- Checkpoint/resume — interrupted runs pick up where they left off
+- Checkpoint/resume — interrupted full loads pick up where they left off
+- Two-phase incremental sync: new CVEs (by publish date) first, then modified CVEs — ensures newly published vulnerabilities aren't buried behind routine metadata updates
 - Staging table upserts (`INSERT ... ON CONFLICT`) for idempotent loads
 - Retry logic for both NVD API and database connections
+
+**Recovering from an interrupted incremental sync:**
+
+If you kill an incremental run mid-way, the `MAX(last_modified)` high-water mark in the DB will have advanced, causing the next run to skip unprocessed records. Use `--since` to force the original start date:
+
+```bash
+uv run python scripts/load_nvd_full.py --incremental --since 2026-04-14
+```
+
+Already-processed records will upsert harmlessly.
 
 **Recommended workflow for the full NVD load:**
 
@@ -99,9 +113,9 @@ uv run python scripts/load_nvd_full.py --limit 3
    caffeinate -i uv run python scripts/load_nvd_full.py --backfill-embeddings
    ```
 
-3. Keep up to date with incremental syncs:
+3. Keep up to date with incremental syncs (Phase 2 can take several hours — use `caffeinate -i`):
    ```bash
-   uv run python scripts/load_nvd_full.py --incremental
+   caffeinate -i uv run python scripts/load_nvd_full.py --incremental
    ```
 
 ## NVD API Key

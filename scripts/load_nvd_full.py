@@ -4,11 +4,16 @@ Uses paginated bulk fetching from NVD API 2.0 (2000 CVEs per page).
 Supports incremental sync, checkpoint/resume, and separate embedding backfill.
 
 Usage:
-    uv run python scripts/load_nvd_full.py                    # Full load
-    uv run python scripts/load_nvd_full.py --incremental      # Sync since last run
-    uv run python scripts/load_nvd_full.py --skip-embeddings  # Data only, no embeddings
-    uv run python scripts/load_nvd_full.py --backfill-embeddings  # Fill missing embeddings
-    uv run python scripts/load_nvd_full.py --limit 3          # Test with first 3 pages
+    uv run python scripts/load_nvd_full.py                         # Full load
+    uv run python scripts/load_nvd_full.py --incremental           # Sync since last run
+    uv run python scripts/load_nvd_full.py --incremental --since 2026-04-14  # Override start date
+    uv run python scripts/load_nvd_full.py --skip-embeddings       # Data only, no embeddings
+    uv run python scripts/load_nvd_full.py --backfill-embeddings   # Fill missing embeddings
+    uv run python scripts/load_nvd_full.py --limit 3               # Test with first 3 pages
+
+Incremental sync runs two phases: new CVEs (by published date) first, then all modified CVEs.
+Use --since to override the start date after an interrupted run.
+Use 'caffeinate -i' on macOS to prevent sleep during long Phase 2 runs.
 
 Set NVD_API_KEY env var to increase rate limit from 5 to 50 requests per 30 seconds.
 """
@@ -321,7 +326,9 @@ async def embed_and_upsert(
 
     end = already_loaded + len(cve_records)
     print(f"  Upserting records {already_loaded + 1}–{end}{suffix}...")
+    upsert_start = time.time()
     await upsert_with_retry(dsn, cve_records, embeddings)
+    print(f"  Upserted in {format_elapsed(upsert_start)}")
     return len(cve_records)
 
 
