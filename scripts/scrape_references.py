@@ -208,18 +208,20 @@ async def fetch_stale_pairs(conn: asyncpg.Connection, cve_id: str | None) -> lis
             SELECT cve_id, url FROM cve_references
             WHERE cve_id = $1
               AND (http_status IS NULL OR http_status < 400)
-              AND (scraped_at IS NULL OR scraped_at < NOW() - INTERVAL '30 days')
+              AND (scraped_at IS NULL OR scraped_at < NOW() - ($2 * INTERVAL '1 day'))
             """,
             cve_id,
+            REFRESH_DAYS,
         )
     else:
         rows = await conn.fetch(
             """
             SELECT cve_id, url FROM cve_references
             WHERE (http_status IS NULL OR http_status < 400)
-              AND (scraped_at IS NULL OR scraped_at < NOW() - INTERVAL '30 days')
+              AND (scraped_at IS NULL OR scraped_at < NOW() - ($1 * INTERVAL '1 day'))
             ORDER BY cve_id
-            """
+            """,
+            REFRESH_DAYS,
         )
     return [(row["cve_id"], row["url"]) for row in rows]
 
@@ -232,136 +234,68 @@ async def process_pairs(
     client: httpx.AsyncClient,
     openai_client: AsyncOpenAI,
     anthropic_client: anthropic.AsyncAnthropic,
-    dsn: str,
+    pool: asyncpg.Pool,
 ) -> tuple[int, int, int]:
     """Scrape, summarize, embed, and upsert a list of (cve_id, url) pairs.
 
     Returns (scraped, skipped, embedded).
     """
     semaphores: dict[str, asyncio.Semaphore] = {}
-    scraped = skipped = embedded = 0
-
-    # Accumulate rows ready for embedding
+    embed_lock = asyncio.Lock()
+    scraped = skipped = embedded = processed = 0
     pending_embed: list[dict] = []
 
     async def flush_pending() -> None:
         nonlocal embedded
         if not pending_embed:
             return
-        texts = [r["content"] for r in pending_embed]
-        print(f"  Embedding {len(texts)} pages...")
-        # Batch embed
-        all_embeddings: list[list[float]] = []
-        for i in range(0, len(texts), EMBED_BATCH_SIZE):
-            batch = texts[i : i + EMBED_BATCH_SIZE]
-            resp = await openai_client.embeddings.create(model=settings.embedding_model, input=batch)
-            all_embeddings.extend([item.embedding for item in resp.data])
-
-        conn = await asyncpg.connect(dsn=dsn)
-        await register_vector(conn)
-        for row, emb in zip(pending_embed, all_embeddings, strict=True):
-            await conn.execute(
-                UPSERT_SQL,
-                row["url"],
-                row["cve_id"],
-                row["domain"],
-                row["title"],
-                row["scraped_text"],
-                row["summary"],
-                row["content"],
-                np.array(emb, dtype=np.float32),
-                row["http_status"],
-                row["content_hash"],
-                row["skip_reason"],
-            )
-        await conn.close()
-        embedded += len(pending_embed)
+        batch = list(pending_embed)
         pending_embed.clear()
 
-    async def upsert_skip(cve_id: str, url: str, domain: str, reason: str) -> None:
-        conn = await asyncpg.connect(dsn=dsn)
-        await register_vector(conn)
-        await conn.execute(
-            UPSERT_SQL,
-            url,
-            cve_id,
-            domain,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            reason,
-        )
-        await conn.close()
+        texts = [r["content"] for r in batch]
+        print(f"  Embedding {len(texts)} pages...")
+        all_embeddings: list[list[float]] = []
+        for i in range(0, len(texts), EMBED_BATCH_SIZE):
+            chunk = texts[i : i + EMBED_BATCH_SIZE]
+            resp = await openai_client.embeddings.create(model=settings.embedding_model, input=chunk)
+            all_embeddings.extend([item.embedding for item in resp.data])
 
-    for idx, (cve_id, url) in enumerate(pairs):
-        parsed = urlparse(url)
-        hostname = parsed.netloc.lower()
-        rd = registered_domain(hostname)
-
-        # 1. Denylist check
-        if hostname in DENYLIST_DOMAINS or rd in DENYLIST_DOMAINS:
-            await upsert_skip(cve_id, url, rd, f"denylist:{rd}")
-            skipped += 1
-            if (idx + 1) % 100 == 0:
-                print(f"  Processed {idx + 1}/{len(pairs)} (skipped denylist)")
-            continue
-
-        # 2. Robots.txt check
-        if not await is_robots_allowed(client, url):
-            await upsert_skip(cve_id, url, rd, "robots_txt")
-            skipped += 1
-            continue
-
-        # 3. Fetch with per-domain rate limiting
-        sem = domain_semaphore(semaphores, hostname)
-        async with sem:
-            try:
-                resp = await client.get(url, timeout=30, follow_redirects=True, max_redirects=5)
-                http_status = resp.status_code
-            except Exception as exc:
-                reason = f"fetch_error:{type(exc).__name__}"
-                await upsert_skip(cve_id, url, rd, reason)
-                skipped += 1
-                continue
-            finally:
-                await asyncio.sleep(domain_delay(hostname))
-
-        # 4. Non-200 responses
-        if http_status != 200:
-            conn = await asyncpg.connect(dsn=dsn)
-            await register_vector(conn)
-            await conn.execute(
+        async with pool.acquire() as conn:
+            await conn.executemany(
                 UPSERT_SQL,
-                url,
-                cve_id,
-                rd,
-                None,
-                None,
-                None,
-                None,
-                None,
-                http_status,
-                None,
-                f"http_{http_status}",
+                [
+                    (
+                        row["url"],
+                        row["cve_id"],
+                        row["domain"],
+                        row["title"],
+                        row["scraped_text"],
+                        row["summary"],
+                        row["content"],
+                        np.array(emb, dtype=np.float32),
+                        row["http_status"],
+                        row["content_hash"],
+                        row["skip_reason"],
+                    )
+                    for row, emb in zip(batch, all_embeddings, strict=True)
+                ],
             )
-            await conn.close()
-            skipped += 1
-            continue
+        embedded += len(batch)
 
-        # 5. Extract text
-        title, body = extract_text(resp.text)
-        if not body:
-            conn = await asyncpg.connect(dsn=dsn)
-            await register_vector(conn)
+    async def upsert_skip(
+        cve_id: str,
+        url: str,
+        domain: str,
+        reason: str,
+        http_status: int | None = None,
+        title: str | None = None,
+    ) -> None:
+        async with pool.acquire() as conn:
             await conn.execute(
                 UPSERT_SQL,
                 url,
                 cve_id,
-                rd,
+                domain,
                 title,
                 None,
                 None,
@@ -369,51 +303,104 @@ async def process_pairs(
                 None,
                 http_status,
                 None,
-                "no_content",
+                reason,
             )
-            await conn.close()
+
+    async def process_one(cve_id: str, url: str) -> None:
+        nonlocal scraped, skipped, processed
+        try:
+            parsed = urlparse(url)
+            hostname = parsed.netloc.lower()
+            rd = registered_domain(hostname)
+
+            # 1. Denylist check
+            if hostname in DENYLIST_DOMAINS or rd in DENYLIST_DOMAINS:
+                await upsert_skip(cve_id, url, rd, f"denylist:{rd}")
+                skipped += 1
+                return
+
+            # 2. Robots.txt check
+            if not await is_robots_allowed(client, url):
+                await upsert_skip(cve_id, url, rd, "robots_txt")
+                skipped += 1
+                return
+
+            # 3. Fetch with per-domain rate limiting
+            sem = domain_semaphore(semaphores, hostname)
+            async with sem:
+                try:
+                    resp = await client.get(url, timeout=30, follow_redirects=True, max_redirects=5)
+                    http_status = resp.status_code
+                except Exception as exc:
+                    reason = f"fetch_error:{type(exc).__name__}"
+                    await upsert_skip(cve_id, url, rd, reason)
+                    skipped += 1
+                    return
+                finally:
+                    await asyncio.sleep(domain_delay(hostname))
+
+            # 4. Non-200 responses
+            if http_status != 200:
+                await upsert_skip(cve_id, url, rd, f"http_{http_status}", http_status)
+                skipped += 1
+                return
+
+            # 5. Extract text
+            title, body = extract_text(resp.text)
+            if not body:
+                await upsert_skip(cve_id, url, rd, "no_content", http_status, title)
+                skipped += 1
+                return
+
+            # 6. Hash for change detection
+            chash = compute_hash(body)
+
+            # 7. Two-tier summarization
+            summary: str | None = None
+            if len(body) >= SUMMARIZE_THRESHOLD:
+                try:
+                    summary = await summarize(anthropic_client, body)
+                    content = summary
+                except Exception as exc:
+                    print(f"  Summarization failed for {url}: {exc}")
+                    content = body[:8000]
+            else:
+                content = body
+
+            async with embed_lock:
+                pending_embed.append(
+                    {
+                        "url": url,
+                        "cve_id": cve_id,
+                        "domain": rd,
+                        "title": title,
+                        "scraped_text": body,
+                        "summary": summary,
+                        "content": content,
+                        "http_status": http_status,
+                        "content_hash": chash,
+                        "skip_reason": None,
+                    }
+                )
+                scraped += 1
+                if len(pending_embed) >= SCRAPE_BATCH_SIZE:
+                    await flush_pending()
+
+        except Exception as exc:
+            print(f"  Unexpected error for {url}: {exc}")
             skipped += 1
-            continue
+        finally:
+            processed += 1
+            if processed % 50 == 0:
+                print(f"  Processed {processed}/{len(pairs)} (scraped={scraped}, skipped={skipped})")
 
-        # 6. Hash for change detection
-        chash = compute_hash(body)
+    async with asyncio.TaskGroup() as tg:
+        for cve_id, url in pairs:
+            tg.create_task(process_one(cve_id, url))
 
-        # 7. Two-tier summarization
-        summary: str | None = None
-        if len(body) >= SUMMARIZE_THRESHOLD:
-            try:
-                summary = await summarize(anthropic_client, body)
-                content = summary
-            except Exception as exc:
-                print(f"  Summarization failed for {url}: {exc}")
-                content = body[:8000]
-        else:
-            content = body
+    async with embed_lock:
+        await flush_pending()
 
-        pending_embed.append(
-            {
-                "url": url,
-                "cve_id": cve_id,
-                "domain": rd,
-                "title": title,
-                "scraped_text": body,
-                "summary": summary,
-                "content": content,
-                "http_status": http_status,
-                "content_hash": chash,
-                "skip_reason": None,
-            }
-        )
-        scraped += 1
-
-        # Flush embedding batch
-        if len(pending_embed) >= SCRAPE_BATCH_SIZE:
-            await flush_pending()
-
-        if (idx + 1) % 50 == 0:
-            print(f"  Processed {idx + 1}/{len(pairs)} (scraped={scraped}, skipped={skipped})")
-
-    await flush_pending()
     return scraped, skipped, embedded
 
 
@@ -426,24 +413,26 @@ async def main() -> None:
     parser.add_argument("--cve", metavar="CVE_ID", help="Limit to a single CVE")
     args = parser.parse_args()
 
+    if not settings.anthropic_api_key:
+        raise SystemExit("ANTHROPIC_API_KEY is required for reference scraping (used for Haiku summarization)")
+
     dsn = settings.get_database_dsn()
-    conn = await asyncpg.connect(dsn=dsn)
-    await register_vector(conn)
+    pool = await asyncpg.create_pool(dsn=dsn, init=register_vector, min_size=2, max_size=10)
 
-    if args.refresh:
-        pairs = await fetch_stale_pairs(conn, args.cve)
-        mode = "refresh"
-    else:
-        pairs = await fetch_unprocessed_pairs(conn, args.cve)
-        mode = "initial"
-
-    await conn.close()
+    async with pool.acquire() as conn:
+        if args.refresh:
+            pairs = await fetch_stale_pairs(conn, args.cve)
+            mode = "refresh"
+        else:
+            pairs = await fetch_unprocessed_pairs(conn, args.cve)
+            mode = "initial"
 
     scope = f"CVE {args.cve}" if args.cve else "all CVEs"
     print(f"Starting reference scrape ({mode}, {scope}): {len(pairs)} URL pairs to process")
 
     if not pairs:
         print("Nothing to do.")
+        await pool.close()
         return
 
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
@@ -457,8 +446,9 @@ async def main() -> None:
     }
 
     async with httpx.AsyncClient(headers=headers, timeout=30) as client:
-        scraped, skipped, embedded = await process_pairs(pairs, client, openai_client, anthropic_client, dsn)
+        scraped, skipped, embedded = await process_pairs(pairs, client, openai_client, anthropic_client, pool)
 
+    await pool.close()
     print(f"Done. scraped={scraped}, skipped={skipped}, embedded={embedded}")
 
 
