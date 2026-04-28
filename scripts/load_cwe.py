@@ -44,12 +44,18 @@ async def download_cwe_csv() -> list[dict]:
         zip_bytes = resp.content
 
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-        csv_name = next(name for name in zf.namelist() if name.endswith(".csv"))
+        csv_name = next((name for name in zf.namelist() if name.endswith(".csv")), None)
+        if csv_name is None:
+            raise ValueError(f"No CSV file found in zip. Contents: {zf.namelist()}")
         with zf.open(csv_name) as f:
             content = f.read().decode("utf-8", errors="replace")
 
     rows = []
     reader = csv.DictReader(io.StringIO(content))
+    expected = {"CWE-ID", "Name", "Weakness Abstraction", "Description"}
+    missing = expected - set(reader.fieldnames or [])
+    if missing:
+        raise ValueError(f"CWE CSV missing expected columns: {missing}")
     for row in reader:
         raw_id = row.get("CWE-ID", "").strip()
         if not raw_id:
@@ -97,10 +103,11 @@ async def main() -> None:
 
     print("Connecting to PostgreSQL...")
     conn = await asyncpg.connect(dsn=settings.get_database_dsn())
-
-    print("Upserting records...")
-    await upsert_definitions(conn, rows)
-    await conn.close()
+    try:
+        print("Upserting records...")
+        await upsert_definitions(conn, rows)
+    finally:
+        await conn.close()
 
     print(f"Done! Loaded {len(rows)} CWE definitions.")
 
