@@ -98,6 +98,16 @@ These use SQL against the `nvd_vulnerabilities` table:
 - "Which CWEs appear most frequently?"
 - "Show the distribution of CVSS severity levels"
 
+### CWE weakness queries — JOIN with cwe_definitions
+
+These join `nvd_vulnerabilities` or `kev_vulnerabilities` with `cwe_definitions` to resolve IDs to names:
+
+- "Which weakness types appear most often in KEV entries?"
+- "What is CWE-79 and which CVEs in our database are affected?"
+- "Show the top 10 weakness categories by average CVSS score"
+- "How many actively exploited vulnerabilities involve injection weaknesses?"
+- "Which vendors have the most CVEs classified as memory corruption weaknesses?"
+
 ### Cross-referenced queries — JOIN
 
 These combine both tables using `cve_id` as the join key:
