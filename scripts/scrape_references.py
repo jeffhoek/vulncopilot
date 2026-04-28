@@ -341,7 +341,7 @@ async def process_pairs(
             sem = domain_semaphore(semaphores, hostname)
             async with sem:
                 try:
-                    resp = await client.get(url, timeout=30, follow_redirects=True, max_redirects=5)
+                    resp = await client.get(url, timeout=30, follow_redirects=True)
                     http_status = resp.status_code
                 except Exception as exc:
                     reason = f"fetch_error:{type(exc).__name__}"
@@ -463,7 +463,7 @@ async def main() -> None:
         )
     }
 
-    async with httpx.AsyncClient(headers=headers, timeout=30) as client:
+    async with httpx.AsyncClient(headers=headers, timeout=30, max_redirects=5) as client:
         scraped, skipped, embedded = await process_pairs(
             pairs, client, openai_client, anthropic_client, pool, existing_hashes
         )
