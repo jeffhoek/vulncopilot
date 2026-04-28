@@ -4,11 +4,16 @@ Uses paginated bulk fetching from NVD API 2.0 (2000 CVEs per page).
 Supports incremental sync, checkpoint/resume, and separate embedding backfill.
 
 Usage:
-    uv run python scripts/load_nvd_full.py                    # Full load
-    uv run python scripts/load_nvd_full.py --incremental      # Sync since last run
-    uv run python scripts/load_nvd_full.py --skip-embeddings  # Data only, no embeddings
-    uv run python scripts/load_nvd_full.py --backfill-embeddings  # Fill missing embeddings
-    uv run python scripts/load_nvd_full.py --limit 3          # Test with first 3 pages
+    uv run python scripts/load_nvd_full.py                         # Full load
+    uv run python scripts/load_nvd_full.py --incremental           # Sync since last run
+    uv run python scripts/load_nvd_full.py --incremental --since 2026-04-14  # Override start date
+    uv run python scripts/load_nvd_full.py --skip-embeddings       # Data only, no embeddings
+    uv run python scripts/load_nvd_full.py --backfill-embeddings   # Fill missing embeddings
+    uv run python scripts/load_nvd_full.py --limit 3               # Test with first 3 pages
+
+Incremental sync runs two phases: new CVEs (by published date) first, then all modified CVEs.
+Use --since to override the start date after an interrupted run.
+Use 'caffeinate -i' on macOS to prevent sleep during long Phase 2 runs.
 
 Set NVD_API_KEY env var to increase rate limit from 5 to 50 requests per 30 seconds.
 """
@@ -167,6 +172,8 @@ async def fetch_nvd_page(
     start_index: int,
     last_mod_start: str | None = None,
     last_mod_end: str | None = None,
+    pub_start: str | None = None,
+    pub_end: str | None = None,
 ) -> dict:
     """Fetch a page of CVEs from the NVD API 2.0."""
     import httpx
@@ -179,6 +186,10 @@ async def fetch_nvd_page(
         params["lastModStartDate"] = last_mod_start
     if last_mod_end:
         params["lastModEndDate"] = last_mod_end
+    if pub_start:
+        params["pubStartDate"] = pub_start
+    if pub_end:
+        params["pubEndDate"] = pub_end
 
     headers = {}
     if NVD_API_KEY:
@@ -315,7 +326,9 @@ async def embed_and_upsert(
 
     end = already_loaded + len(cve_records)
     print(f"  Upserting records {already_loaded + 1}–{end}{suffix}...")
+    upsert_start = time.time()
     await upsert_with_retry(dsn, cve_records, embeddings)
+    print(f"  Upserted in {format_elapsed(upsert_start)}")
     return len(cve_records)
 
 
@@ -428,23 +441,26 @@ async def _sync_window(
     end_str: str,
     openai_client: AsyncOpenAI | None,
     dsn: str,
+    label: str = "modified",
+    pub_filter: bool = False,
 ) -> int:
-    """Paginate through one 120-day window, returning total records synced."""
+    """Paginate through one date window, returning total records synced.
+
+    Set pub_filter=True to filter by pubStartDate/pubEndDate instead of lastModStartDate/lastModEndDate.
+    """
     loaded = 0
     current_index = 0
 
     while True:
-        data = await fetch_nvd_page(
-            session,
-            current_index,
-            last_mod_start=start_str,
-            last_mod_end=end_str,
-        )
+        if pub_filter:
+            data = await fetch_nvd_page(session, current_index, pub_start=start_str, pub_end=end_str)
+        else:
+            data = await fetch_nvd_page(session, current_index, last_mod_start=start_str, last_mod_end=end_str)
         await asyncio.sleep(REQUEST_DELAY)
 
         total_in_window = data.get("totalResults", 0)
         if current_index == 0:
-            print(f"  {total_in_window} modified CVEs in this window")
+            print(f"  {total_in_window} {label} CVEs in this window")
 
         vulnerabilities = data.get("vulnerabilities", [])
         if not vulnerabilities:
@@ -461,21 +477,34 @@ async def _sync_window(
 
 
 async def incremental_sync(args) -> None:
-    """Fetch CVEs modified since the last sync."""
+    """Fetch CVEs published or modified since the last sync.
+
+    Runs two phases: new CVEs (by published date) first, then modified CVEs.
+    This ensures newly published vulnerabilities are available immediately
+    rather than being buried behind ~76k metadata-refresh updates.
+    """
     import httpx
 
     dsn = settings.get_database_dsn()
     conn = await asyncpg.connect(dsn=dsn, timeout=DB_CONNECT_TIMEOUT)
-    row = await conn.fetchrow("SELECT MAX(last_modified) as max_date FROM nvd_vulnerabilities")
+    row = await conn.fetchrow(
+        "SELECT MAX(last_modified) as max_modified, MAX(published) as max_published FROM nvd_vulnerabilities"
+    )
     await conn.close()
 
-    if not row or not row["max_date"]:
+    if not row or not row["max_modified"]:
         print("No existing records found. Run a full load first.")
         return
 
-    high_water = datetime.combine(row["max_date"], datetime.min.time(), tzinfo=UTC)
     now = datetime.now(UTC)
-    print(f"Syncing changes from {high_water.date()} to {now.date()}")
+
+    if args.since:
+        mod_high_water = datetime.fromisoformat(args.since).replace(tzinfo=UTC)
+        pub_high_water = mod_high_water
+        print(f"Overriding start date to {mod_high_water.date()} (--since)")
+    else:
+        mod_high_water = datetime.combine(row["max_modified"], datetime.min.time(), tzinfo=UTC)
+        pub_high_water = datetime.combine(row["max_published"], datetime.min.time(), tzinfo=UTC)
 
     openai_client = None
     if not args.skip_embeddings:
@@ -483,19 +512,35 @@ async def incremental_sync(args) -> None:
 
     total_loaded = 0
     started_at = time.time()
-    window_start = high_water
 
     async with httpx.AsyncClient(timeout=60) as session:
+        # Phase 1: newly published CVEs
+        print(f"\nPhase 1 — new CVEs published from {pub_high_water.date()} to {now.date()}")
+        window_start = pub_high_water
         while window_start < now:
             window_end = min(window_start + timedelta(days=120), now)
             start_str = window_start.strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
             end_str = window_end.strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
-
             print(f"Window: {window_start.date()} to {window_end.date()}")
-            total_loaded += await _sync_window(session, start_str, end_str, openai_client, dsn)
+            total_loaded += await _sync_window(
+                session, start_str, end_str, openai_client, dsn, label="new", pub_filter=True
+            )
             window_start = window_end
 
-    print(f"Done! Synced {total_loaded} CVEs in {format_elapsed(started_at)}")
+        # Phase 2: modified CVEs (includes new ones again, but upsert is idempotent)
+        print(f"\nPhase 2 — CVEs modified from {mod_high_water.date()} to {now.date()}")
+        window_start = mod_high_water
+        while window_start < now:
+            window_end = min(window_start + timedelta(days=120), now)
+            start_str = window_start.strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
+            end_str = window_end.strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
+            print(f"Window: {window_start.date()} to {window_end.date()}")
+            total_loaded += await _sync_window(
+                session, start_str, end_str, openai_client, dsn, label="modified", pub_filter=False
+            )
+            window_start = window_end
+
+    print(f"\nDone! Synced {total_loaded} CVEs in {format_elapsed(started_at)}")
 
 
 BACKFILL_MAX_RETRIES = 5
@@ -639,6 +684,13 @@ async def backfill_embeddings() -> None:
 async def main() -> None:
     parser = argparse.ArgumentParser(description="Full NVD ETL")
     parser.add_argument("--incremental", action="store_true", help="Sync changes since last run")
+    parser.add_argument(
+        "--since",
+        type=str,
+        default=None,
+        metavar="DATE",
+        help="Override incremental start date (YYYY-MM-DD); use after an interrupted run",
+    )
     parser.add_argument("--skip-embeddings", action="store_true", help="Load data without generating embeddings")
     parser.add_argument("--backfill-embeddings", action="store_true", help="Generate embeddings for rows missing them")
     parser.add_argument("--limit", type=int, default=None, help="Limit to N pages (for testing)")

@@ -68,8 +68,11 @@ Fetches the entire NVD (~280k CVEs) via paginated bulk API calls. This is a larg
 # Full load — fetches all CVEs, generates embeddings
 uv run python scripts/load_nvd_full.py
 
-# Incremental sync — fetches only CVEs modified since last run
+# Incremental sync — fetches only CVEs published or modified since last run
 uv run python scripts/load_nvd_full.py --incremental
+
+# Override start date — use after an interrupted incremental run
+uv run python scripts/load_nvd_full.py --incremental --since 2026-04-14
 
 # Data only, skip embedding generation (faster initial load)
 uv run python scripts/load_nvd_full.py --skip-embeddings
@@ -83,9 +86,20 @@ uv run python scripts/load_nvd_full.py --limit 3
 
 **Features:**
 - Paginated bulk fetching (2,000 CVEs per page)
-- Checkpoint/resume — interrupted runs pick up where they left off
+- Checkpoint/resume — interrupted full loads pick up where they left off
+- Two-phase incremental sync: new CVEs (by publish date) first, then modified CVEs — ensures newly published vulnerabilities aren't buried behind routine metadata updates
 - Staging table upserts (`INSERT ... ON CONFLICT`) for idempotent loads
 - Retry logic for both NVD API and database connections
+
+**Recovering from an interrupted incremental sync:**
+
+If you kill an incremental run mid-way, the `MAX(last_modified)` high-water mark in the DB will have advanced, causing the next run to skip unprocessed records. Use `--since` to force the original start date:
+
+```bash
+uv run python scripts/load_nvd_full.py --incremental --since 2026-04-14
+```
+
+Already-processed records will upsert harmlessly.
 
 **Recommended workflow for the full NVD load:**
 
@@ -99,10 +113,43 @@ uv run python scripts/load_nvd_full.py --limit 3
    caffeinate -i uv run python scripts/load_nvd_full.py --backfill-embeddings
    ```
 
-3. Keep up to date with incremental syncs:
+3. Keep up to date with incremental syncs (Phase 2 can take several hours — use `caffeinate -i`):
    ```bash
-   uv run python scripts/load_nvd_full.py --incremental
+   caffeinate -i uv run python scripts/load_nvd_full.py --incremental
    ```
+
+**HNSW index and large incremental syncs:**
+
+NVD modifies thousands of CVEs per week for routine metadata refreshes (CVSS rescoring, CPE updates, etc.), so large incremental windows can involve 20k–80k upserts. Maintaining the HNSW vector index on every batch causes significant Disk IO — on constrained hosting (e.g. Supabase Micro) this can make each 2,000-row batch take several minutes.
+
+For large syncs (roughly monthly or after a long gap), drop the index before running and rebuild it afterward. **Upgrade to Medium compute before the rebuild** — Micro cannot allocate enough shared memory for a usable `maintenance_work_mem` setting, making the build extremely slow. Downgrade back to Micro when done.
+
+```sql
+-- Before ETL (run in Supabase SQL editor or psql)
+DROP INDEX IF EXISTS nvd_embedding_idx;
+```
+
+```bash
+caffeinate -i uv run python scripts/load_nvd_full.py --incremental
+```
+
+```bash
+# After ETL — rebuild with 1GB maintenance_work_mem (max usable on Medium)
+caffeinate -i time psql "$DATABASE_URL" -c "SET statement_timeout = 0; SET maintenance_work_mem = '1GB'; CREATE INDEX nvd_embedding_idx ON nvd_vulnerabilities USING hnsw (embedding vector_cosine_ops);"
+```
+
+Monitor progress in the Supabase SQL editor:
+
+```sql
+SELECT phase, tuples_done, tuples_total,
+       round(tuples_done::numeric / nullif(tuples_total, 0) * 100, 1) AS pct_done
+FROM pg_stat_progress_create_index
+WHERE relid = 'nvd_vulnerabilities'::regclass;
+```
+
+The row disappears when the build completes. On Medium with 1GB `maintenance_work_mem`, expect ~60 minutes for ~346k rows at 1536 dimensions. The chatbot's semantic search is unavailable during this window but the app remains up.
+
+For smaller weekly syncs the index overhead is usually tolerable — skip the drop/rebuild unless upsert batches start taking several minutes.
 
 ## NVD API Key
 
@@ -128,7 +175,10 @@ uv run python scripts/load_nvd.py
 **Full NVD** (incremental sync):
 
 ```bash
-uv run python scripts/load_nvd_full.py --incremental
+# Weekly — index overhead is usually fine
+caffeinate -i uv run python scripts/load_nvd_full.py --incremental
+
+# Monthly / large gap — upgrade to Medium compute, drop HNSW index first, rebuild after (see above)
 ```
 
 No app restart is needed — data is queried live from the database.
