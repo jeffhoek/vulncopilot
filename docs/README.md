@@ -6,6 +6,7 @@
 |---|---|
 | [data-loading.md](data-loading.md) | ETL guide for populating the database with CISA KEV and NVD data (KEV-scoped and full NVD) |
 | [nvd-integration.md](nvd-integration.md) | NVD & CISA KEV dataset integration, schema, and cross-reference query examples |
+| [cwe-integration.md](cwe-integration.md) | MITRE CWE weakness taxonomy integration — `cwe_definitions` lookup table, ETL script, and example JOIN queries |
 | [deploy-azure-app-service.md](deploy-azure-app-service.md) | Deploy to Azure App Service as a Linux container, using ACR, Key Vault, and Azure Pipelines with Workload Identity Federation |
 | [deploy-gcp-cloud-run.md](deploy-gcp-cloud-run.md) | Deploy to Google Cloud Run |
 | [eks-runbook.md](eks-runbook.md) | Deploy to AWS EKS using GitHub Actions CI/CD |

@@ -35,7 +35,7 @@ NVD is a record browser with filters. This chatbot is an analyst. A few things i
 
 ## Features
 
-- CISA KEV + NVD datasets (~1,500 KEV entries, enriched with CVSS scores from NVD)
+- CISA KEV + NVD datasets (~1,500 KEV entries, enriched with CVSS scores from NVD) + MITRE CWE weakness taxonomy
 - PostgreSQL/pgvector for vector storage and cosine similarity search (HNSW index)
 - OpenAI embeddings (text-embedding-3-small)
 - Two agent tools: `retrieve` (semantic search) and `query` (direct SQL)
@@ -189,6 +189,9 @@ uv run python scripts/load_nvd.py
 
 # Or load the full NVD database (~280k CVEs) — optional, requires more storage
 uv run python scripts/load_nvd_full.py
+
+# Load MITRE CWE weakness definitions — enables CWE name resolution in queries
+uv run python scripts/load_cwe.py
 ```
 
 Set `NVD_API_KEY` in `.env` for a higher NVD API rate limit (optional). See [docs/data-loading.md](docs/data-loading.md) for the full guide, including incremental sync, checkpoint/resume, and embedding backfill options. For storage sizing and PostgreSQL hosting options when loading the full NVD dataset, see [docs/postgres-hosting-options.md](docs/postgres-hosting-options.md). For the database schema and example queries, see [docs/nvd-integration.md](docs/nvd-integration.md).
