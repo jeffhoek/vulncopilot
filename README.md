@@ -12,7 +12,7 @@ A retrieval-augmented generation chatbot for vulnerability research, built with 
 - **Vendor risk assessment** — identify which vendors have the most known exploited vulnerabilities
 - **DevSecOps** — check project dependencies for known exploited vulnerabilities before shipping
 
-## Why not just use NVD.nist.gov?
+## Why this project?
 
 NVD is a record browser with filters. This chatbot is an analyst. A few things it can do that the NVD site cannot:
 
@@ -32,6 +32,8 @@ NVD is a record browser with filters. This chatbot is an analyst. A few things i
 - *"How many days on average elapsed between NVD publication and CISA KEV addition in 2024?"*
 - *"Rank overdue KEV vulnerabilities by CVSS score for the vendors in my environment."*
 - *"Find vulnerabilities conceptually similar to Log4Shell in terms of attack pattern."*
+
+For a broader comparison against commercial platforms, academic projects, and other open-source tools, see [docs/competitive-analysis.md](docs/competitive-analysis.md).
 
 ## Features
 

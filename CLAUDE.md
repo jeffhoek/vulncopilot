@@ -13,6 +13,7 @@ A RAG chatbot built with Pydantic AI and Chainlit that indexes CISA KEV and NIST
 - [Logfire observability](docs/logfire-setup.md)
 - [Supabase RBAC](docs/supabase-readonly-role.md)
 - [MCP server](docs/mcp-server.md)
+- [Competitive analysis](docs/competitive-analysis.md)
 - [Future enhancements](docs/future-enhancements.md)
 
 ## Development Commands
