@@ -86,7 +86,7 @@ These use SQL against the `kev_vulnerabilities` table:
 - "Which 5 vendors have the most KEV entries?"
 - "List all KEV entries added in the last 30 days"
 - "What products from Microsoft are in the KEV catalog?"
-- "How many vulnerabilities were added to KEV in 2024?"
+- "How many vulnerabilities were added to KEV in 2026?"
 
 ### Structured queries — NVD only
 
@@ -94,9 +94,19 @@ These use SQL against the `nvd_vulnerabilities` table:
 
 - "How many CVEs have a CVSS score of 10.0?"
 - "What is the average CVSS score across all vulnerabilities?"
-- "List CVEs with CRITICAL severity published in 2024"
+- "List CVEs with CRITICAL severity published in 2026"
 - "Which CWEs appear most frequently?"
 - "Show the distribution of CVSS severity levels"
+
+### CWE weakness queries — JOIN with cwe_definitions
+
+These join `nvd_vulnerabilities` or `kev_vulnerabilities` with `cwe_definitions` to resolve IDs to names:
+
+- "Which weakness types appear most often in KEV entries?"
+- "What is CWE-79 and which CVEs in our database are affected?"
+- "Show the top 10 weakness categories by average CVSS score"
+- "How many actively exploited vulnerabilities involve injection weaknesses?"
+- "Which vendors have the most CVEs classified as memory corruption weaknesses?"
 
 ### Cross-referenced queries — JOIN
 
