@@ -37,6 +37,7 @@ There are three ETL scripts, each targeting a different scope:
 | `scripts/load_kev.py` | CISA KEV catalog | ~1,500 | Always run first — KEV is the primary dataset |
 | `scripts/load_nvd.py` | NVD data for KEV CVEs only | ~1,500 | Enriches KEV entries with CVSS scores, severity, affected products |
 | `scripts/load_nvd_full.py` | Entire NVD database | ~280,000 | Full NVD corpus for broader vulnerability research |
+| `scripts/scrape_references.py` | NVD reference URLs | ~5,000–8,000 | Scrapes linked advisories and write-ups for richer semantic search |
 
 ### 1. Load CISA KEV data
 
