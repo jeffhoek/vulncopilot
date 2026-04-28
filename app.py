@@ -8,7 +8,7 @@ from pydantic_ai import Agent
 if os.getenv("LOGFIRE_ENABLED", "").lower() == "true":
     import logfire
 
-    logfire.configure()
+    logfire.configure(scrubbing=False)
     logfire.instrument_pydantic_ai()
     logfire.instrument_openai()
 
