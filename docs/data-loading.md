@@ -122,10 +122,10 @@ Already-processed records will upsert harmlessly.
 
 NVD modifies thousands of CVEs per week for routine metadata refreshes (CVSS rescoring, CPE updates, etc.), so large incremental windows can involve 20k–80k upserts. Maintaining the HNSW vector index on every batch causes significant Disk IO — on constrained hosting (e.g. Supabase Micro) this can make each 2,000-row batch take several minutes.
 
-For large syncs (roughly monthly or after a long gap), drop the index before running and rebuild it afterward:
+For large syncs (roughly monthly or after a long gap), drop the index before running and rebuild it afterward. **Upgrade to Medium compute before the rebuild** — Micro cannot allocate enough shared memory for a usable `maintenance_work_mem` setting, making the build extremely slow. Downgrade back to Micro when done.
 
 ```sql
--- Before ETL
+-- Before ETL (run in Supabase SQL editor or psql)
 DROP INDEX IF EXISTS nvd_embedding_idx;
 ```
 
@@ -133,14 +133,21 @@ DROP INDEX IF EXISTS nvd_embedding_idx;
 caffeinate -i uv run python scripts/load_nvd_full.py --incremental
 ```
 
-```sql
--- After ETL — rebuilding once from scratch is faster than incremental updates
-CREATE INDEX nvd_embedding_idx
-    ON nvd_vulnerabilities
-    USING hnsw (embedding vector_cosine_ops);
+```bash
+# After ETL — rebuild with 1GB maintenance_work_mem (max usable on Medium)
+caffeinate -i time psql "$DATABASE_URL" -c "SET statement_timeout = 0; SET maintenance_work_mem = '1GB'; CREATE INDEX nvd_embedding_idx ON nvd_vulnerabilities USING hnsw (embedding vector_cosine_ops);"
 ```
 
-The rebuild takes 30–90 minutes on ~346k rows at 1536 dimensions (varies by compute). The chatbot's semantic search is unavailable during this window but the app remains up.
+Monitor progress in the Supabase SQL editor:
+
+```sql
+SELECT phase, tuples_done, tuples_total,
+       round(tuples_done::numeric / nullif(tuples_total, 0) * 100, 1) AS pct_done
+FROM pg_stat_progress_create_index
+WHERE relid = 'nvd_vulnerabilities'::regclass;
+```
+
+The row disappears when the build completes. On Medium with 1GB `maintenance_work_mem`, expect ~60 minutes for ~346k rows at 1536 dimensions. The chatbot's semantic search is unavailable during this window but the app remains up.
 
 For smaller weekly syncs the index overhead is usually tolerable — skip the drop/rebuild unless upsert batches start taking several minutes.
 
@@ -171,7 +178,7 @@ uv run python scripts/load_nvd.py
 # Weekly — index overhead is usually fine
 caffeinate -i uv run python scripts/load_nvd_full.py --incremental
 
-# Monthly / large gap — drop HNSW index first, rebuild after (see above)
+# Monthly / large gap — upgrade to Medium compute, drop HNSW index first, rebuild after (see above)
 ```
 
 No app restart is needed — data is queried live from the database.
