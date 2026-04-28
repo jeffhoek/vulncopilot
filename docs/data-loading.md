@@ -151,6 +151,41 @@ The row disappears when the build completes. On Medium with 1GB `maintenance_wor
 
 For smaller weekly syncs the index overhead is usually tolerable — skip the drop/rebuild unless upsert batches start taking several minutes.
 
+### 4. Scrape NVD reference URLs
+
+Scrapes the reference URLs stored in `nvd_vulnerabilities.reference_urls`, extracts main-text
+content, summarizes long pages with Claude Haiku, generates embeddings, and stores results in
+the `cve_references` table. Requires NVD data to be loaded first (step 2 or 3).
+
+```bash
+# Initial scrape — processes all unscraped (cve_id, url) pairs
+uv run python scripts/scrape_references.py
+
+# Single CVE — useful for testing or targeted refresh
+uv run python scripts/scrape_references.py --cve CVE-2021-44228
+
+# Re-scrape stale entries — URLs not fetched in the last 30 days (skips known-dead links)
+uv run python scripts/scrape_references.py --refresh
+```
+
+**What gets skipped:**
+
+Low-signal domains are skipped immediately without fetching (NVD self-refs, MITRE CVE pages,
+social media). Pages blocked by `robots.txt`, HTTP errors, and pages with no extractable text
+are recorded with a `skip_reason` so re-runs don't re-attempt them.
+
+**Summarization:**
+
+Pages longer than ~8,000 characters are summarized with Claude Haiku before embedding to keep
+chunk quality high and stay within the embedding model's token limit. Requires
+`ANTHROPIC_API_KEY` in `.env`.
+
+**Scale estimate:**
+
+KEV-scoped NVD (~1,500 CVEs, up to 10 URLs each) produces roughly 5,000–8,000 fetchable URLs
+after denylist filtering. With per-domain rate limiting and HTTP timeouts, expect 2–4 hours
+for an initial full scrape. Use `--cve` to test a single CVE first.
+
 ## NVD API Key
 
 All NVD scripts benefit from an API key, which increases the rate limit from 5 to 50 requests per 30 seconds. Set `NVD_API_KEY` in `.env`. Request a free key at https://nvd.nist.gov/developers/request-an-api-key.
@@ -161,6 +196,31 @@ All NVD scripts benefit from an API key, which increases the rate limit from 5 t
 psql "$DATABASE_URL" -c "SELECT COUNT(*) FROM kev_vulnerabilities;"
 psql "$DATABASE_URL" -c "SELECT COUNT(*) FROM nvd_vulnerabilities;"
 psql "$DATABASE_URL" -c "SELECT COUNT(*) FROM nvd_vulnerabilities WHERE embedding IS NULL;"
+```
+
+For reference scraping:
+
+```bash
+# Overall counts
+psql "$DATABASE_URL" -c "SELECT COUNT(*) FROM cve_references;"
+psql "$DATABASE_URL" -c "SELECT COUNT(*) FROM cve_references WHERE embedding IS NOT NULL;"
+
+# Breakdown by outcome
+psql "$DATABASE_URL" -c "
+  SELECT
+    COALESCE(skip_reason, 'scraped') AS outcome,
+    COUNT(*) AS count
+  FROM cve_references
+  GROUP BY outcome
+  ORDER BY count DESC;"
+
+# Sample of successfully scraped rows
+psql "$DATABASE_URL" -c "
+  SELECT cve_id, domain, http_status, length(content) AS content_len, scraped_at
+  FROM cve_references
+  WHERE embedding IS NOT NULL
+  ORDER BY scraped_at DESC
+  LIMIT 10;"
 ```
 
 ## Refreshing Data
@@ -179,6 +239,12 @@ uv run python scripts/load_nvd.py
 caffeinate -i uv run python scripts/load_nvd_full.py --incremental
 
 # Monthly / large gap — upgrade to Medium compute, drop HNSW index first, rebuild after (see above)
+```
+
+**Reference URLs** (re-scrape pages older than 30 days, skip dead links):
+
+```bash
+uv run python scripts/scrape_references.py --refresh
 ```
 
 No app restart is needed — data is queried live from the database.

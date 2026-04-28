@@ -68,6 +68,33 @@ CREATE TABLE IF NOT EXISTS cwe_definitions (
     description TEXT,
     url         TEXT
 );
+
+CREATE TABLE IF NOT EXISTS cve_references (
+    id              SERIAL PRIMARY KEY,
+    url             TEXT NOT NULL,
+    cve_id          VARCHAR(20) NOT NULL,
+    domain          TEXT,
+    title           TEXT,
+    scraped_text    TEXT,
+    summary         TEXT,
+    content         TEXT,
+    embedding       vector(1536),
+    http_status     INTEGER,
+    scraped_at      TIMESTAMPTZ,
+    content_hash    TEXT,
+    skip_reason     TEXT,
+    UNIQUE (url, cve_id)
+);
+
+CREATE INDEX IF NOT EXISTS cve_references_embedding_idx
+    ON cve_references
+    USING hnsw (embedding vector_cosine_ops);
+
+CREATE INDEX IF NOT EXISTS cve_references_cve_id_idx
+    ON cve_references (cve_id);
+
+CREATE INDEX IF NOT EXISTS cve_references_scraped_at_idx
+    ON cve_references (scraped_at);
 """
 
 
