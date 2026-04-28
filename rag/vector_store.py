@@ -16,9 +16,11 @@ class PgVectorStore:
                 SELECT content FROM (
                     SELECT content, embedding <=> $1 AS distance
                     FROM kev_vulnerabilities
+                    WHERE embedding IS NOT NULL
                     UNION ALL
                     SELECT content, embedding <=> $1 AS distance
                     FROM nvd_vulnerabilities
+                    WHERE embedding IS NOT NULL
                     UNION ALL
                     SELECT content, embedding <=> $1 AS distance
                     FROM cve_references
@@ -36,7 +38,8 @@ class PgVectorStore:
         async with self.pool.acquire() as conn:
             return await conn.fetchval(
                 """
-                SELECT (SELECT count(*) FROM kev_vulnerabilities)
-                     + (SELECT count(*) FROM nvd_vulnerabilities)
+                SELECT (SELECT count(*) FROM kev_vulnerabilities WHERE embedding IS NOT NULL)
+                     + (SELECT count(*) FROM nvd_vulnerabilities WHERE embedding IS NOT NULL)
+                     + (SELECT count(*) FROM cve_references WHERE embedding IS NOT NULL)
                 """
             )

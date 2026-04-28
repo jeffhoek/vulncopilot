@@ -186,6 +186,12 @@ KEV-scoped NVD (~1,500 CVEs, up to 10 URLs each) produces roughly 5,000–8,000 
 after denylist filtering. With per-domain rate limiting and HTTP timeouts, expect 2–4 hours
 for an initial full scrape. Use `--cve` to test a single CVE first.
 
+**Interrupted runs:**
+
+Unlike `load_nvd_full.py`, the reference scraper has no checkpoint file — there is no mid-batch
+resume. However, a restart is safe: already-processed URLs are skipped by the `NOT EXISTS`
+guard in the query, so only unprocessed pairs will be re-attempted.
+
 ## NVD API Key
 
 All NVD scripts benefit from an API key, which increases the rate limit from 5 to 50 requests per 30 seconds. Set `NVD_API_KEY` in `.env`. Request a free key at https://nvd.nist.gov/developers/request-an-api-key.
