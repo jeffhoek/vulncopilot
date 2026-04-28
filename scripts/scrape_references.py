@@ -51,6 +51,7 @@ DENYLIST_DOMAINS = {
     "youtube.com",
     "linkedin.com",
     "t.co",
+    "packetstormsecurity.com",  # TOS consent gate — content not reliably accessible
 }
 
 # Per-domain concurrency and inter-request delay (seconds)
