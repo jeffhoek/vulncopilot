@@ -27,6 +27,7 @@ import anthropic
 import asyncpg
 import httpx
 import numpy as np
+import tldextract
 import trafilatura
 from openai import AsyncOpenAI
 from pgvector.asyncpg import register_vector
@@ -84,6 +85,8 @@ UPSERT_SQL = """
         skip_reason  = EXCLUDED.skip_reason
 """
 
+TOUCH_SQL = "UPDATE cve_references SET scraped_at = NOW() WHERE url = $1 AND cve_id = $2"
+
 # --- Robots.txt cache ---------------------------------------------------------
 
 _robots_cache: dict[str, RobotExclusionRulesParser] = {}
@@ -108,9 +111,11 @@ async def is_robots_allowed(client: httpx.AsyncClient, url: str) -> bool:
 
 
 def registered_domain(hostname: str) -> str:
-    """Return eTLD+1 (e.g. 'sub.microsoft.com' → 'microsoft.com')."""
-    parts = hostname.split(".")
-    return ".".join(parts[-2:]) if len(parts) >= 2 else hostname
+    """Return eTLD+1 using tldextract, handling ccTLD+SLD pairs correctly."""
+    ext = tldextract.extract(hostname)
+    if ext.suffix:
+        return f"{ext.domain}.{ext.suffix}"
+    return hostname
 
 
 def domain_semaphore(semaphores: dict[str, asyncio.Semaphore], hostname: str) -> asyncio.Semaphore:
@@ -200,12 +205,14 @@ async def fetch_unprocessed_pairs(conn: asyncpg.Connection, cve_id: str | None) 
     return [(row["cve_id"], row["url"]) for row in rows]
 
 
-async def fetch_stale_pairs(conn: asyncpg.Connection, cve_id: str | None) -> list[tuple[str, str]]:
-    """Return (cve_id, url) pairs that are older than REFRESH_DAYS and not dead."""
+async def fetch_stale_pairs(
+    conn: asyncpg.Connection, cve_id: str | None
+) -> tuple[list[tuple[str, str]], dict[tuple[str, str], str | None]]:
+    """Return stale (cve_id, url) pairs and a dict of their existing content_hash values."""
     if cve_id:
         rows = await conn.fetch(
             """
-            SELECT cve_id, url FROM cve_references
+            SELECT cve_id, url, content_hash FROM cve_references
             WHERE cve_id = $1
               AND (http_status IS NULL OR http_status < 400)
               AND (scraped_at IS NULL OR scraped_at < NOW() - ($2 * INTERVAL '1 day'))
@@ -216,14 +223,16 @@ async def fetch_stale_pairs(conn: asyncpg.Connection, cve_id: str | None) -> lis
     else:
         rows = await conn.fetch(
             """
-            SELECT cve_id, url FROM cve_references
+            SELECT cve_id, url, content_hash FROM cve_references
             WHERE (http_status IS NULL OR http_status < 400)
               AND (scraped_at IS NULL OR scraped_at < NOW() - ($1 * INTERVAL '1 day'))
             ORDER BY cve_id
             """,
             REFRESH_DAYS,
         )
-    return [(row["cve_id"], row["url"]) for row in rows]
+    pairs = [(row["cve_id"], row["url"]) for row in rows]
+    hashes = {(row["cve_id"], row["url"]): row["content_hash"] for row in rows}
+    return pairs, hashes
 
 
 # --- Core scrape + embed pipeline ---------------------------------------------
@@ -235,6 +244,7 @@ async def process_pairs(
     openai_client: AsyncOpenAI,
     anthropic_client: anthropic.AsyncAnthropic,
     pool: asyncpg.Pool,
+    existing_hashes: dict[tuple[str, str], str | None] | None = None,
 ) -> tuple[int, int, int]:
     """Scrape, summarize, embed, and upsert a list of (cve_id, url) pairs.
 
@@ -352,8 +362,13 @@ async def process_pairs(
                 skipped += 1
                 return
 
-            # 6. Hash for change detection
+            # 6. Hash for change detection; skip re-embed if content unchanged
             chash = compute_hash(body)
+            if existing_hashes is not None and existing_hashes.get((cve_id, url)) == chash:
+                async with pool.acquire() as conn:
+                    await conn.execute(TOUCH_SQL, url, cve_id)
+                skipped += 1
+                return
 
             # 7. Two-tier summarization
             summary: str | None = None
@@ -419,9 +434,10 @@ async def main() -> None:
     dsn = settings.get_database_dsn()
     pool = await asyncpg.create_pool(dsn=dsn, init=register_vector, min_size=2, max_size=10)
 
+    existing_hashes: dict[tuple[str, str], str | None] | None = None
     async with pool.acquire() as conn:
         if args.refresh:
-            pairs = await fetch_stale_pairs(conn, args.cve)
+            pairs, existing_hashes = await fetch_stale_pairs(conn, args.cve)
             mode = "refresh"
         else:
             pairs = await fetch_unprocessed_pairs(conn, args.cve)
@@ -446,7 +462,9 @@ async def main() -> None:
     }
 
     async with httpx.AsyncClient(headers=headers, timeout=30) as client:
-        scraped, skipped, embedded = await process_pairs(pairs, client, openai_client, anthropic_client, pool)
+        scraped, skipped, embedded = await process_pairs(
+            pairs, client, openai_client, anthropic_client, pool, existing_hashes
+        )
 
     await pool.close()
     print(f"Done. scraped={scraped}, skipped={skipped}, embedded={embedded}")
