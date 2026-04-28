@@ -181,11 +181,15 @@ Pages longer than ~8,000 characters are summarized with Claude Haiku before embe
 chunk quality high and stay within the embedding model's token limit. Requires
 `ANTHROPIC_API_KEY` in `.env`.
 
+**Processing order:**
+
+KEV CVEs are always processed before the broader NVD corpus. Since KEV is ~1,500 entries vs. ~280k for full NVD, the KEV-scoped references complete in a fraction of the total runtime and are typically what analysts care about first.
+
 **Scale estimate:**
 
 KEV-scoped NVD (~1,500 CVEs, up to 10 URLs each) produces roughly 5,000–8,000 fetchable URLs
 after denylist filtering. With per-domain rate limiting and HTTP timeouts, expect 2–4 hours
-for an initial full scrape. Use `--cve` to test a single CVE first.
+for an initial KEV-scoped scrape. Full NVD references can take significantly longer — use `--cve` to test a single CVE first.
 
 **Interrupted runs:**
 

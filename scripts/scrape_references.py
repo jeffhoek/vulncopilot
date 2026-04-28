@@ -199,7 +199,8 @@ async def fetch_unprocessed_pairs(conn: asyncpg.Connection, cve_id: str | None) 
                 SELECT 1 FROM cve_references r
                 WHERE r.cve_id = n.cve_id AND r.url = u.url
             )
-            ORDER BY n.cve_id
+            ORDER BY (EXISTS (SELECT 1 FROM kev_vulnerabilities k WHERE k.cve_id = n.cve_id)) DESC,
+                     n.cve_id
             """
         )
     return [(row["cve_id"], row["url"]) for row in rows]
@@ -223,10 +224,11 @@ async def fetch_stale_pairs(
     else:
         rows = await conn.fetch(
             """
-            SELECT cve_id, url, content_hash FROM cve_references
-            WHERE (http_status IS NULL OR http_status < 400)
-              AND (scraped_at IS NULL OR scraped_at < NOW() - ($1 * INTERVAL '1 day'))
-            ORDER BY cve_id
+            SELECT r.cve_id, r.url, r.content_hash FROM cve_references r
+            WHERE (r.http_status IS NULL OR r.http_status < 400)
+              AND (r.scraped_at IS NULL OR r.scraped_at < NOW() - ($1 * INTERVAL '1 day'))
+            ORDER BY (EXISTS (SELECT 1 FROM kev_vulnerabilities k WHERE k.cve_id = r.cve_id)) DESC,
+                     r.cve_id
             """,
             REFRESH_DAYS,
         )
