@@ -17,6 +17,8 @@ from rag.vector_store import PgVectorStore
 logger = logging.getLogger(__name__)
 
 MAX_QUERY_ROWS = 100
+MAX_CELL_CHARS = 200
+MAX_OUTPUT_CHARS = 20_000
 
 mcp = FastMCP("kev-nvd-rag")
 
@@ -104,9 +106,20 @@ async def query(sql: str) -> str:
     lines = [" | ".join(headers)]
     lines.append("-" * len(lines[0]))
     for row in rows:
-        lines.append(" | ".join(str(v) for v in row.values()))
+        lines.append(
+            " | ".join(
+                s if len(s) <= MAX_CELL_CHARS else s[:MAX_CELL_CHARS] + "…" for s in (str(v) for v in row.values())
+            )
+        )
     lines.append(f"\n{len(rows)} row(s) returned.")
-    return "\n".join(lines)
+    result = "\n".join(lines)
+    if len(result) > MAX_OUTPUT_CHARS:
+        result = result[:MAX_OUTPUT_CHARS] + (
+            "\n\n[Output truncated: result exceeded size limit. "
+            "Re-query without STRING_AGG or large aggregated columns, "
+            "or narrow the result set.]"
+        )
+    return result
 
 
 class McpRouterMiddleware:
