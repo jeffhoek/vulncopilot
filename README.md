@@ -51,7 +51,7 @@ For a broader comparison against commercial platforms, academic projects, and ot
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/) package manager
-- PostgreSQL with pgvector extension — local container or Timescale Cloud
+- PostgreSQL with pgvector extension — local container or Supabase
 
 ## Installation
 
@@ -79,15 +79,15 @@ For a broader comparison against commercial platforms, academic projects, and ot
    ANTHROPIC_API_KEY=your-anthropic-api-key
    OPENAI_API_KEY=your-openai-api-key
 
-   # Option A — Timescale Cloud or any remote pgvector instance:
-   DATABASE_URL=postgresql://user:password@hostname.tsdb.cloud.timescale.com:5432/dbname?sslmode=require
-
-   # Option B — local container (defaults, matches docker-compose.yaml pgvector service):
+   # Option A — local container (defaults, matches compose pgvector service):
    PG_HOST=localhost
    PG_PORT=5432
    PG_USER=postgresuser
    PG_PASSWORD=postgrespw
    PG_DATABASE=inventory
+
+   # Option B — Supabase or any remote pgvector instance:
+   DATABASE_URL=postgresql://user:password@db.<project-ref>.supabase.co:5432/postgres?sslmode=require
    ```
 
    `DATABASE_URL` takes precedence over the individual `PG_*` vars when set.
@@ -130,22 +130,7 @@ The app requires username/password login. To set it up:
 
 Choose the database backend that fits your workflow:
 
-### Option A: Timescale Cloud (or any remote pgvector)
-
-No local containers needed. Set `DATABASE_URL` in `.env` and run directly:
-
-```bash
-# Load KEV + NVD data (one-time)
-uv run python scripts/load_kev.py
-uv run python scripts/load_nvd.py
-
-# Start the chatbot
-uv run chainlit run app.py
-```
-
-Open http://localhost:8000.
-
-### Option B: Local pgvector container only
+### Option A: Local pgvector container (Podman)
 
 Spin up just the pgvector service, then run the app with `uv`:
 
@@ -163,6 +148,21 @@ uv run chainlit run app.py
 
 Open http://localhost:8000.
 
+### Option B: Supabase (or any remote pgvector)
+
+No local containers needed. Set `DATABASE_URL` in `.env` to your Supabase connection string and run directly:
+
+```bash
+# Load KEV + NVD data (one-time)
+uv run python scripts/load_kev.py
+uv run python scripts/load_nvd.py
+
+# Start the chatbot
+uv run chainlit run app.py
+```
+
+Open http://localhost:8000. See [plans/migrate-to-supabase.md](plans/migrate-to-supabase.md) for Supabase setup details.
+
 ### Option C: Full stack (Langfuse observability + pgvector + chatbot container)
 
 Starts all services: pgvector, the full Langfuse stack (postgres, clickhouse, redis, minio), and the chatbot container itself:
@@ -174,7 +174,7 @@ podman compose up -d
 - Chatbot: http://localhost:8080
 - Langfuse: http://localhost:3000 (admin@local.dev / password)
 
-See [docs/observability.md](docs/observability.md) for Langfuse configuration details.
+See [docs/observability.md](docs/observability.md) for Langfuse configuration details, including the managed **Logfire** integration as an alternative to self-hosted Langfuse.
 
 > **Note:** The `chatbot` service in Compose builds the image locally and uses fixed DB credentials from the compose environment. Options A and B are better for active development since changes take effect immediately without rebuilding the image.
 
@@ -189,7 +189,7 @@ uv run python scripts/load_kev.py
 # Fetch NVD enrichment for KEV CVEs (CVSS scores, severity, affected products)
 uv run python scripts/load_nvd.py
 
-# Or load the full NVD database (~280k CVEs) — optional, requires more storage
+# Or load the full NVD database (~280k CVEs) — optional, requires more storage and can take several hours
 uv run python scripts/load_nvd_full.py
 
 # Load MITRE CWE weakness definitions — enables CWE name resolution in queries
