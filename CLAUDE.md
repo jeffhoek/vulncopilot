@@ -7,14 +7,13 @@ A RAG chatbot built with Pydantic AI and Chainlit that indexes CISA KEV and NIST
 - [Data loading (ETL)](docs/data-loading.md)
 - [NVD integration](docs/nvd-integration.md)
 - [CWE integration](docs/cwe-integration.md)
-- [pgvector migration](docs/pgvector-migration.md)
+- [Supabase migration](plans/migrate-to-supabase.md)
 - [Deployment: Azure](docs/deploy-azure-app-service.md), [GCP](docs/deploy-gcp-cloud-run.md), [EKS](docs/eks-runbook.md)
-- [Langfuse observability](docs/langfuse-setup.md)
-- [Logfire observability](docs/logfire-setup.md)
+- [Observability (Langfuse + Logfire)](docs/observability.md)
 - [Supabase RBAC](docs/supabase-readonly-role.md)
 - [MCP server](docs/mcp-server.md)
-- [Competitive analysis](docs/competitive-analysis.md)
-- [Future enhancements](docs/future-enhancements.md)
+- [Competitive analysis](plans/competitive-analysis.md)
+- [Future enhancements](plans/future-enhancements.md)
 
 ## Development Commands
 

@@ -33,7 +33,7 @@ NVD is a record browser with filters. This chatbot is an analyst. A few things i
 - *"Rank overdue KEV vulnerabilities by CVSS score for the vendors in my environment."*
 - *"Find vulnerabilities conceptually similar to Log4Shell in terms of attack pattern."*
 
-For a broader comparison against commercial platforms, academic projects, and other open-source tools, see [docs/competitive-analysis.md](docs/competitive-analysis.md).
+For a broader comparison against commercial platforms, academic projects, and other open-source tools, see [plans/competitive-analysis.md](plans/competitive-analysis.md).
 
 ## Features
 
@@ -44,8 +44,8 @@ For a broader comparison against commercial platforms, academic projects, and ot
 - Claude LLM via Pydantic AI agent
 - Chainlit web interface with authentication
 - MCP server at `/mcp` — exposes `retrieve` and `query` to external agents — see [docs/mcp-server.md](docs/mcp-server.md)
-- Langfuse observability (optional, self-hosted via Compose) — see [docs/langfuse-setup.md](docs/langfuse-setup.md)
-- Logfire observability (optional, cloud-hosted tracing) — see [docs/logfire-setup.md](docs/logfire-setup.md)
+- Langfuse observability (optional, self-hosted via Compose) — see [docs/observability.md](docs/observability.md)
+- Logfire observability (optional, cloud-hosted tracing) — see [docs/observability.md](docs/observability.md)
 
 ## Requirements
 
@@ -174,7 +174,7 @@ podman compose up -d
 - Chatbot: http://localhost:8080
 - Langfuse: http://localhost:3000 (admin@local.dev / password)
 
-See [docs/langfuse-setup.md](docs/langfuse-setup.md) for Langfuse configuration details.
+See [docs/observability.md](docs/observability.md) for Langfuse configuration details.
 
 > **Note:** The `chatbot` service in Compose builds the image locally and uses fixed DB credentials from the compose environment. Options A and B are better for active development since changes take effect immediately without rebuilding the image.
 
@@ -196,7 +196,7 @@ uv run python scripts/load_nvd_full.py
 uv run python scripts/load_cwe.py
 ```
 
-Set `NVD_API_KEY` in `.env` for a higher NVD API rate limit (optional). See [docs/data-loading.md](docs/data-loading.md) for the full guide, including incremental sync, checkpoint/resume, and embedding backfill options. For storage sizing and PostgreSQL hosting options when loading the full NVD dataset, see [docs/postgres-hosting-options.md](docs/postgres-hosting-options.md). For the database schema and example queries, see [docs/nvd-integration.md](docs/nvd-integration.md).
+Set `NVD_API_KEY` in `.env` for a higher NVD API rate limit (optional). See [docs/data-loading.md](docs/data-loading.md) for the full guide, including incremental sync, checkpoint/resume, and embedding backfill options. For storage sizing and PostgreSQL hosting options when loading the full NVD dataset, see [plans/postgres-hosting-options.md](plans/postgres-hosting-options.md). For the database schema and example queries, see [docs/nvd-integration.md](docs/nvd-integration.md).
 
 ## Configuration
 
@@ -240,4 +240,4 @@ Then open http://localhost:8080.
 
 ## Further Reading
 
-See [docs/](docs/README.md) for the full documentation index, including deployment guides (Azure, GCP, EKS), observability setup, and [future enhancements](docs/future-enhancements.md).
+See [docs/](docs/README.md) for the full documentation index, including deployment guides (Azure, GCP, EKS), observability setup, and [future enhancements](plans/future-enhancements.md).
