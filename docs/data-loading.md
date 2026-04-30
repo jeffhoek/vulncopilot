@@ -62,7 +62,7 @@ The script is incremental — it skips CVEs already loaded, so re-runs only fetc
 
 ### 3. Load full NVD database (optional)
 
-Fetches the entire NVD (~280k CVEs) via paginated bulk API calls. This is a large dataset requiring ~3.5-5.5 GB of storage (see [postgres-hosting-options.md](postgres-hosting-options.md) for sizing details).
+Fetches the entire NVD (~280k CVEs) via paginated bulk API calls. This is a large dataset requiring ~3.5-5.5 GB of storage (see [plans/postgres-hosting-options.md](../plans/postgres-hosting-options.md) for sizing details).
 
 ```bash
 # Full load — fetches all CVEs, generates embeddings

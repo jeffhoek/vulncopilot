@@ -36,7 +36,7 @@ uv run python scripts/load_nvd_full.py  # ~280k CVEs, supports --incremental, --
 uv run chainlit run app.py
 ```
 
-See [postgres-hosting-options.md](postgres-hosting-options.md) for storage sizing with the full NVD dataset.
+See [plans/postgres-hosting-options.md](../plans/postgres-hosting-options.md) for storage sizing with the full NVD dataset.
 
 ## Database Schema
 

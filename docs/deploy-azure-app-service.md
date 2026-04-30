@@ -343,6 +343,39 @@ uv run python scripts/load_nvd.py
 
 ---
 
+## MCP Server
+
+The `/mcp` endpoint is co-hosted on the same App Service container as the Chainlit UI. No additional Azure resources are required.
+
+### Architecture
+
+```
+Azure App Service (existing container)
+├── / → Chainlit WebSocket UI           (unchanged)
+├── /healthz → health check             (unchanged)
+└── /mcp → FastMCP Streamable HTTP      (new)
+      ├── tool: retrieve                (semantic search)
+      └── tool: query                   (direct SQL)
+```
+
+All traffic uses the same HTTPS endpoint, same managed identity, same Key Vault references, and the same asyncpg connection pool.
+
+### Transport
+
+Streamable HTTP is used instead of SSE — it is stateless per-request and avoids Azure App Service idle timeout issues with long-lived SSE connections. Requires MCP spec 2025-03-26+ clients (Claude Desktop, etc.).
+
+### Authentication
+
+The `/mcp` route requires an `X-API-Key` header. The key is stored in Key Vault as `mcp-api-key` and injected via the Key Vault reference pattern (see Step 4.1 above). Generate a key with:
+
+```bash
+openssl rand -hex 32
+```
+
+See [docs/mcp-server.md](mcp-server.md) for the full MCP server operational guide, including tool reference and client connection examples.
+
+---
+
 ## Troubleshooting
 
 **KV reference not resolving (App Service shows "Failed")**
