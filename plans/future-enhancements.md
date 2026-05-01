@@ -28,7 +28,9 @@ retrieval quality and agent accuracy over time.
 ### Automated ETL Scheduling
 
 Run KEV and NVD data loaders on a recurring schedule (e.g., daily cron) so the
-database stays current without manual intervention.
+database stays current without manual intervention. Surface a data freshness
+indicator in the UI and API responses (e.g., "KEV last synced: 4 hours ago") so
+users can trust the currency of results without checking logs.
 
 ### Persistent Conversation History
 
@@ -90,10 +92,12 @@ search, direct SQL, or a combination of both.
 Provide a programmatic API for other security tools (SIEM, SOAR, ticketing
 systems) to query the vulnerability knowledge base.
 
-### Usage Analytics Dashboard
+### Semantic Caching
 
-Track the most common queries and usage patterns to guide data expansion and
-prompt improvements.
+Cache embeddings and responses for near-duplicate queries so repeated or similar
+questions skip the LLM call entirely. Reduces latency and token costs
+meaningfully in multi-user deployments, and complements Cost Tracking by
+lowering the baseline spend.
 
 ## Nice-to-Have — Cool Features
 
@@ -101,6 +105,8 @@ prompt improvements.
 
 Introduce specialized agents for different tasks (triage, reporting, trend
 analysis) orchestrated by a router agent that delegates based on query intent.
+Only justified if Query Routing proves insufficient — smart dispatch within a
+single agent should be the first attempt.
 
 ### Charting & Visualization Tool
 
@@ -115,7 +121,8 @@ stakeholders who don't use the chatbot directly.
 ### Slack & Teams Integration
 
 Expose the chatbot in messaging platforms so analysts can query vulnerability
-data without leaving their primary communication tool.
+data without leaving their primary communication tool. Downstream of the REST
+API — build the API first and Slack/Teams become thin wrappers around it.
 
 ### Streaming Citations
 
