@@ -162,7 +162,7 @@ tests/contract` to skip integration.
 | 19 | `search` returns rows | returns list of content strings in rank order |
 | 20 | `search` returns no rows | returns empty list |
 | 21 | `get_document_count` happy path | returns integer from mock row |
-| 22 | `search` passes `top_k` to query | SQL contains the expected limit value |
+| 22 | `search` passes `top_k` to query | mock conn.fetch was called with top_k as the second positional argument |
 
 ## Contract tests — `mcp_server/server.py` (McpRouterMiddleware)
 
