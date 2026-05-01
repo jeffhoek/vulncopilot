@@ -1,5 +1,7 @@
 # CISA KEV + NVD RAG Chatbot
 
+[![Tests](https://github.com/jeffhoek/chainlit-pydanticai-postgres/actions/workflows/test.yml/badge.svg)](https://github.com/jeffhoek/chainlit-pydanticai-postgres/actions/workflows/test.yml) [![Claude Code](https://github.com/jeffhoek/chainlit-pydanticai-postgres/actions/workflows/claude.yml/badge.svg)](https://github.com/jeffhoek/chainlit-pydanticai-postgres/actions/workflows/claude.yml) [![Deploy to EKS](https://github.com/jeffhoek/chainlit-pydanticai-postgres/actions/workflows/deploy.yml/badge.svg)](https://github.com/jeffhoek/chainlit-pydanticai-postgres/actions/workflows/deploy.yml)
+
 A retrieval-augmented generation chatbot for vulnerability research, built with Pydantic AI and Chainlit. Indexes the CISA Known Exploited Vulnerabilities (KEV) catalog and NIST National Vulnerability Database (NVD) into PostgreSQL with pgvector, and answers questions using Claude with semantic search and direct SQL.
 
 ![Architecture diagram](docs/chatbot-architecture.drawio.png)
