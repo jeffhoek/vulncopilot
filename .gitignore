@@ -16,3 +16,5 @@ wheels/
 .env.yaml
 data/
 backup.sql
+
+.coverage
