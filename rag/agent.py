@@ -1,5 +1,4 @@
 import logging
-import re
 from dataclasses import dataclass
 
 import asyncpg
@@ -8,6 +7,7 @@ from pydantic_ai import Agent, RunContext
 
 from config import settings
 from rag.embeddings import generate_embedding
+from rag.sql_utils import apply_row_limit, format_query_results, validate_sql
 from rag.vector_store import PgVectorStore
 
 
@@ -24,11 +24,6 @@ rag_agent = Agent(
 )
 
 
-MAX_QUERY_ROWS = 100
-MAX_CELL_CHARS = 200
-MAX_OUTPUT_CHARS = 20_000
-
-
 @rag_agent.tool
 async def query(ctx: RunContext[Deps], sql: str) -> str:
     """Execute a read-only SQL SELECT query against the database.
@@ -39,15 +34,11 @@ async def query(ctx: RunContext[Deps], sql: str) -> str:
     Returns:
         Query results as a formatted table, or an error message.
     """
-    if not sql.strip().upper().startswith("SELECT"):
-        return "Error: Only SELECT statements are permitted."
+    error = validate_sql(sql)
+    if error:
+        return error
 
-    limit_match = re.search(r"\bLIMIT\s+(\d+)\b", sql, re.IGNORECASE)
-    if limit_match:
-        if int(limit_match.group(1)) > MAX_QUERY_ROWS:
-            sql = sql[: limit_match.start(1)] + str(MAX_QUERY_ROWS) + sql[limit_match.end(1) :]
-    else:
-        sql = sql.rstrip().rstrip(";") + f" LIMIT {MAX_QUERY_ROWS}"
+    sql = apply_row_limit(sql)
 
     try:
         async with ctx.deps.vector_store.pool.acquire() as conn:
@@ -61,24 +52,7 @@ async def query(ctx: RunContext[Deps], sql: str) -> str:
     if not rows:
         return "No results found."
 
-    headers = list(rows[0].keys())
-    lines = [" | ".join(headers)]
-    lines.append("-" * len(lines[0]))
-    for row in rows:
-        lines.append(
-            " | ".join(
-                s if len(s) <= MAX_CELL_CHARS else s[:MAX_CELL_CHARS] + "…" for s in (str(v) for v in row.values())
-            )
-        )
-    lines.append(f"\n{len(rows)} row(s) returned.")
-    result = "\n".join(lines)
-    if len(result) > MAX_OUTPUT_CHARS:
-        result = result[:MAX_OUTPUT_CHARS] + (
-            "\n\n[Output truncated: result exceeded size limit. "
-            "Re-query without STRING_AGG or large aggregated columns, "
-            "or narrow the result set.]"
-        )
-    return result
+    return format_query_results(rows)
 
 
 @rag_agent.tool
