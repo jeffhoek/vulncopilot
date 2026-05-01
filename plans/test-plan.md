@@ -18,8 +18,10 @@ phase — see [future-enhancements.md](future-enhancements.md#evaluation-framewo
 - Skip `app.py` and `config.py` entirely for now. Chainlit lifecycle
   hooks are framework-dependent and not meaningfully unit-testable.
 - ETL scripts (`scripts/`) are out of scope for this phase.
-- CI coverage gate: **65%** — a byproduct of the tests below, not a
-  target to pad. Enforced with `--fail-under=65` in pytest config.
+- CI coverage gate: set after the first implementation run. Run with
+  `--cov` to see actual coverage, then pin `fail_under` to that number
+  (rounded down to the nearest 5%) so future changes don't silently
+  regress it.
 
 ## Test types
 
@@ -51,7 +53,7 @@ source = ["rag", "mcp_server"]
 omit = ["scripts/*", "app.py", "config.py"]
 
 [tool.coverage.report]
-fail_under = 65
+# fail_under = TBD — set after first implementation run
 ```
 
 Dev dependencies to add (`httpx` is already a prod dependency — do not add it again):
@@ -268,5 +270,6 @@ No restructuring of existing fixtures is required.
 7. Set up local test DB; validate `seeded_pool` fixture
 8. `tests/integration/test_vector_store_db.py`
 9. `tests/integration/test_mcp_tools_db.py`
-10. Enable coverage gate in CI — add `--cov --cov-fail-under=65` to the
-    pytest step in `azure-pipelines.yml`
+10. Run with `--cov` (no `--cov-fail-under`) to see actual coverage, then
+    set `fail_under` in `pyproject.toml` and `azure-pipelines.yml` based
+    on the result
