@@ -19,6 +19,9 @@ Ingest supplementary vulnerability intelligence such as:
 - **GitHub Security Advisories** — coverage for open-source dependencies
 - **Exploit-DB** — proof-of-concept exploit availability
 - **Vendor-specific advisories** — Microsoft, Cisco, Adobe, etc.
+- **STIG / IAVA compliance data** — DISA IAVA mandatory-remediation orders and STIG check
+  findings, cross-referenced with KEV/NVD CVEs and the CWE taxonomy.
+  See [stig-iava-integration.md](stig-iava-integration.md) for the full plan.
 
 ### Reference URL Content Scraping
 
