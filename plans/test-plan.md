@@ -43,6 +43,7 @@ No E2E (Chainlit UI) or property-based tests in this phase.
 ```toml
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
 testpaths = ["tests"]
 
 [tool.coverage.run]
@@ -53,14 +54,13 @@ omit = ["scripts/*", "app.py", "config.py"]
 fail_under = 65
 ```
 
-Dev dependencies to add:
+Dev dependencies to add (`httpx` is already a prod dependency — do not add it again):
 
 ```
 pytest
 pytest-asyncio
 pytest-cov
 pytest-mock
-httpx
 ```
 
 ## Directory layout
@@ -98,6 +98,11 @@ async def seeded_pool(db_pool) -> asyncpg.Pool: ...
 # Mock OpenAI client that returns a deterministic unit embedding vector.
 @pytest.fixture
 def mock_openai() -> AsyncMock: ...
+
+# Patch settings.embedding_model so embedding unit tests don't require
+# EMBEDDING_MODEL to be set in the environment.
+@pytest.fixture(autouse=False)
+def mock_settings(monkeypatch): monkeypatch.setenv("EMBEDDING_MODEL", "text-embedding-3-small") ...
 
 # PgVectorStore wrapping the real seeded pool.
 @pytest.fixture(scope="session")
@@ -145,7 +150,7 @@ tests/contract` to skip integration.
 
 ## Unit tests — `rag/embeddings.py`
 
-~3 tests. Mock `openai_client.embeddings.create`.
+~3 tests. Mock `openai_client.embeddings.create`. Apply the `mock_settings` fixture so `settings.embedding_model` resolves without a live env var.
 
 | # | Scenario | Assertion |
 |---|---|---|
@@ -170,6 +175,11 @@ tests/contract` to skip integration.
 no live server, no DB. `set_mcp_context` is **not** called so
 `_mcp_context` remains `None`; these tests only exercise the auth layer.
 
+Note: `McpRouterMiddleware.__init__` calls `mcp.http_app(...)` (FastMCP
+initialization). Verify in implementation whether FastMCP handles this
+cleanly in test contexts; if it has side effects, mock `mcp.http_app`
+in the fixture setup.
+
 | # | Scenario | Expected HTTP status |
 |---|---|---|
 | 23 | `GET /mcp` with correct `X-Api-Key` | passes through to MCP app (not 401) |
@@ -187,7 +197,19 @@ no live server, no DB. `set_mcp_context` is **not** called so
 | 28 | `search` with a known embedding | returns non-empty list; top result is semantically close |
 | 29 | `search` top_k is respected | result list length ≤ top_k |
 | 30 | `get_document_count` | returns count matching seeded row count |
-| 31 | `search` against empty table | returns empty list without raising |
+| 31 | `search` against empty table | returns empty list without raising — use `db_pool` directly with a `TRUNCATE` before this test, **not** `seeded_pool` (which always has rows) |
+
+## Unit tests — MCP tool error paths (`mcp_server/server.py`)
+
+~4 tests. Mock the pool/context; do **not** require a real DB. These
+cover the silent-failure branches the guiding principles call out.
+
+| # | Scenario | Assertion |
+|---|---|---|
+| 36 | `query` called before `set_mcp_context` (`_mcp_context is None`) | returns the expected "context not initialised" error string |
+| 37 | `retrieve` called before `set_mcp_context` | returns the expected "context not initialised" error string |
+| 38 | `query` — pool raises `asyncpg.PostgresError` | returns `"Error: Database error executing query."` |
+| 39 | `query` — pool raises an unexpected `Exception` | returns `"Error: Internal error executing query."` |
 
 ## Integration tests — MCP tools end-to-end
 
@@ -197,10 +219,18 @@ path from tool function → SQL or embedding → DB → formatted output.
 
 | # | Scenario | Assertion |
 |---|---|---|
-| 32 | `query` valid SELECT against seeded data | returns formatted table with expected rows |
-| 33 | `query` non-SELECT statement | returns permission error string |
-| 34 | `query` with no results | returns `"No results found."` |
-| 35 | `retrieve` with a relevant query string | returns non-empty context string |
+| 40 | `query` valid SELECT against seeded data | returns formatted table with expected rows |
+| 41 | `query` non-SELECT statement | returns permission error string |
+| 42 | `query` with no results | returns `"No results found."` |
+| 43 | `retrieve` with a relevant query string | returns non-empty context string |
+
+## Caller contract — `format_query_results` with empty input
+
+`format_query_results([])` raises `IndexError` (accesses `rows[0].keys()`).
+This is intentional — the `query` tool filters empty results before
+calling it (see `server.py` lines 94-95). There is no test for the
+crash itself; test #42 covers the caller-side guard. This contract is
+documented here rather than tested to make the responsibility explicit.
 
 ## What is explicitly not tested
 
@@ -238,4 +268,5 @@ No restructuring of existing fixtures is required.
 7. Set up local test DB; validate `seeded_pool` fixture
 8. `tests/integration/test_vector_store_db.py`
 9. `tests/integration/test_mcp_tools_db.py`
-10. Enable coverage gate in CI
+10. Enable coverage gate in CI — add `--cov --cov-fail-under=65` to the
+    pytest step in `azure-pipelines.yml`
