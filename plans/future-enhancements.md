@@ -23,7 +23,15 @@ product, or severity threshold.
 ### Evaluation Framework
 
 Build a test suite of question/answer pairs to systematically measure and track
-retrieval quality and agent accuracy over time.
+retrieval quality and agent accuracy over time. Approach in two phases:
+
+- **Offline evals in-repo**: unit-test-style assertions using
+  [Ragas](https://ragas.io/) or [autoevals](https://github.com/brainlid/autoevals)
+  measuring context recall, answer correctness, and faithfulness via
+  LLM-as-judge. Run in CI against a fixed golden dataset.
+- **Online evals via Logfire**: once the offline baseline is established,
+  sample production queries and score grounding and domain relevance directly
+  in Logfire to catch regressions in live traffic.
 
 ### Automated ETL Scheduling
 
@@ -86,6 +94,25 @@ relevance, especially for ambiguous or broad queries.
 
 Automatically determine whether a user question is best served by semantic
 search, direct SQL, or a combination of both.
+
+### Retrieval Scoring Beyond Vector Similarity
+
+Weight retrieval results using domain-specific signals in addition to cosine
+similarity, so that higher-priority vulnerabilities surface first regardless of
+query phrasing:
+
+- **KEV status** — known-exploited CVEs rank above non-KEV results at equal
+  similarity
+- **EPSS score** — once ingested (see Additional Data Sources), use exploitation
+  likelihood as a retrieval weight
+- **Recency** — `date_added` to KEV or NVD publish date as a decay factor
+- **User feedback** — upvoted CVEs gain a small boost (ties into User Feedback
+  Loop)
+- **Top-K tuning** — as more datasets are added (STIG, EPSS, GitHub advisories),
+  increase top-K and rely on Reranking to maintain precision
+
+Implementable as a weighted scoring expression in pgvector alongside the
+existing similarity query.
 
 ### REST API Endpoint
 
