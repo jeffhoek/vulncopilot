@@ -23,6 +23,15 @@ def apply_row_limit(sql: str, max_rows: int = MAX_QUERY_ROWS) -> str:
     return sql
 
 
+def _cell_str(value, max_cell_chars: int) -> str:
+    if isinstance(value, list):
+        return "\n".join(
+            s if len(s) <= max_cell_chars else s[:max_cell_chars] + "…" for s in (str(item) for item in value)
+        )
+    s = str(value)
+    return s if len(s) <= max_cell_chars else s[:max_cell_chars] + "…"
+
+
 def format_query_results(
     rows,
     max_cell_chars: int = MAX_CELL_CHARS,
@@ -33,11 +42,7 @@ def format_query_results(
     lines = [" | ".join(headers)]
     lines.append("-" * len(lines[0]))
     for row in rows:
-        lines.append(
-            " | ".join(
-                s if len(s) <= max_cell_chars else s[:max_cell_chars] + "…" for s in (str(v) for v in row.values())
-            )
-        )
+        lines.append(" | ".join(_cell_str(v, max_cell_chars) for v in row.values()))
     lines.append(f"\n{len(rows)} row(s) returned.")
     result = "\n".join(lines)
     if len(result) > max_output_chars:

@@ -105,3 +105,24 @@ def test_format_query_results_no_truncation_notice_when_output_within_limit():
     rows = _rows({"id": 1})
     result = format_query_results(rows)
     assert "[Output truncated" not in result
+
+
+def test_format_query_results_expands_list_values_one_per_line():
+    urls = [
+        "https://nvd.nist.gov/vuln/detail/CVE-2026-25253",
+        "https://github.com/openclaw/openclaw/security/advisories/GHSA-xxxx-xxxx-xxxx",
+    ]
+    rows = _rows({"reference_urls": urls})
+    result = format_query_results(rows)
+    assert urls[0] in result
+    assert urls[1] in result
+
+
+def test_format_query_results_truncates_long_list_elements_individually():
+    long_url = "https://example.com/" + "a" * (MAX_CELL_CHARS + 10)
+    short_url = "https://example.com/short"
+    rows = _rows({"reference_urls": [long_url, short_url]})
+    result = format_query_results(rows)
+    assert short_url in result
+    assert long_url not in result
+    assert "…" in result
