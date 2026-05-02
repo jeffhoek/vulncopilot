@@ -19,3 +19,12 @@ repos:
     rev: v8.30.1
     hooks:
       - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: pytest-unit-contract
+        name: unit and contract tests
+        entry: uv run pytest tests/unit tests/contract -q --no-header
+        language: system
+        pass_filenames: false
+        always_run: true
