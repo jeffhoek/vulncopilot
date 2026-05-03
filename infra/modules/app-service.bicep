@@ -65,21 +65,17 @@ var systemPrompt = concat(
 
 var actionButtons = join([
   'Latest KEV additions'
+  'Ransomware-linked vulns'
   'Critical vulns with active exploits'
-  'Which vendors appear most in KEV?'
-  'VPN and remote access vulnerabilities'
-  'Ransomware-linked vulnerabilities'
-  'Microsoft product vulnerabilities'
-  'Network device vulnerabilities'
-  'Show unpatched critical vulnerabilities'
-  'AI and cloud tool vulnerabilities'
-  'Which weakness types appear most in KEV?'
-  'Top CWE categories by average CVSS score'
-  'Show critical CVEs grouped by weakness type'
-  'Anthropic Claude'
-  'Top AI vulns in 2026'
+  'Anthropic Claude include URLs'
   'CVE-2026-25253 include URLs'
   'OpenClaw include URLs'
+  'Top AI vulns in 2026'
+  'VPN and remote access vulns'
+  'Network device vulns'
+  'Microsoft product vulns'
+  'Top vendors in KEV'
+  'Top CWE categories by avg CVSS score'
 ], '","')
 
 resource appServicePlan 'Microsoft.Web/serverfarms@2023-12-01' = {
