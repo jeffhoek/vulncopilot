@@ -106,21 +106,56 @@ no monkey-patching required.
 
 ### Scorers
 
-`evals/test_offline_evals.py` uses pytest parametrization:
+Ragas ≥ 0.2 is batch-oriented: scoring goes through a single
+`ragas.evaluate(EvaluationDataset, metrics=[...])` call rather than a
+per-sample `.score()`. The harness collects all `EvalResult`s first and
+scores them in one shot, then surfaces per-row results to pytest.
+
+`evals/test_offline_evals.py` uses pytest parametrization for visibility,
+and `evals/scoring.py` owns the batch call + per-row score lookup:
 
 ```python
-@pytest.mark.parametrize("entry", load_dataset())
-async def test_eval_entry(entry, eval_deps, ragas_evaluator):
-    result = await run_query(entry.query, eval_deps)
-    scores = ragas_evaluator.score(
-        question=entry.query,
-        answer=result.answer,
-        contexts=result.contexts,
-        ground_truth=entry.ground_truth,
-    )
-    record_scores(entry.id, scores)            # writes to artifact JSON
-    assert_thresholds(scores, entry.intent)    # soft-fail in Phase 1.1
+# evals/scoring.py
+from ragas import evaluate
+from ragas.dataset_schema import EvaluationDataset, SingleTurnSample
+from ragas.metrics import answer_correctness, context_recall, faithfulness
+
+METRICS = [context_recall, faithfulness, answer_correctness]
+
+def score_all(rows: list[tuple[GoldenEntry, EvalResult]]) -> dict[str, dict]:
+    samples = [
+        SingleTurnSample(
+            user_input=entry.query,
+            response=result.answer,
+            retrieved_contexts=result.contexts,
+            reference=entry.ground_truth,
+        )
+        for entry, result in rows
+    ]
+    dataset = EvaluationDataset(samples=samples)
+    report = evaluate(dataset, metrics=METRICS)        # single batch call
+    return {entry.id: report.scores[i] for i, (entry, _) in enumerate(rows)}
 ```
+
+```python
+# evals/test_offline_evals.py
+@pytest.mark.parametrize("entry", load_dataset(), ids=lambda e: e.id)
+async def test_eval_entry(entry, eval_deps, all_scores):
+    scores = all_scores[entry.id]                      # batch result lookup
+    assert_thresholds(scores, entry.intent)            # soft-fail in Phase 1.1
+```
+
+The `all_scores` fixture is session-scoped: it runs every dataset entry
+through `run_query`, calls `score_all` once, writes `evals/results.json`
+unconditionally at session finish, and returns the dict for per-row asserts.
+Trade-off: per-test failure isolation is weaker than per-sample scoring (one
+LLM-judge hiccup affects the whole batch), but a single `evaluate()` call
+amortizes batching and matches the Ragas ≥ 0.2 idiom. If per-test isolation
+matters more later, switch to one `evaluate()` per row at higher cost.
+
+Pin `ragas` to a known-compatible version (e.g. `ragas==0.2.*`) in the
+`[dependency-groups] eval` section of `pyproject.toml` to avoid silent
+breakage if the API churns again.
 
 LLM judge for Ragas: Anthropic Claude Haiku (same as the agent), configurable
 via `EVAL_JUDGE_MODEL` env var. Keeps cost low; judge model can be upgraded if
@@ -148,9 +183,30 @@ Job steps:
 1. Postgres 16 + pgvector service container (`pgvector/pgvector:pg16`)
 2. Restore `evals/fixtures/eval_db_seed.sql`
 3. `uv sync --group eval`
-4. `uv run pytest evals/ -v --tb=short --eval-report=evals/results.json`
+4. `uv run pytest evals/ -v --tb=short`
 5. Upload `evals/results.json` as workflow artifact
 6. (Future) Post a summary comment on the PR with score deltas vs. main
+
+`results.json` is written unconditionally by the session-scoped fixture in
+`evals/conftest.py` (which delegates to `evals/scoring.py`) — no custom
+pytest flag is needed. This avoids registering a `--eval-report` option via
+`pytest_addoption` and keeps the CI step a vanilla `pytest` invocation.
+
+Workflow `env:` block (job-level, so all steps inherit):
+
+```yaml
+env:
+  EVAL_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+  EVAL_JUDGE_MODEL: claude-haiku-4-5
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+- `EVAL_DATABASE_URL` mirrors the [tests/conftest.py:55](../tests/conftest.py)
+  `TEST_DATABASE_URL` convention and is read by `evals/conftest.py` to build
+  the eval DB pool. Value points at the Postgres service container above.
+- `EVAL_JUDGE_MODEL` makes the Ragas judge model explicit. `claude-haiku-4-5`
+  is the documented default; override per workflow run if needed.
 
 Secrets `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are already in the repo for
 the existing Claude Code workflow.
