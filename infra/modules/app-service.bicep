@@ -70,13 +70,15 @@ var actionButtons = join([
   'Anthropic Claude'
   'CVE-2026-25253'
   'OpenClaw'
-  'Get the reference URLs for that'
-  'Top AI vulns in 2026'
+  'Reference URLs for CVE-2017-11882'
+  'Top AI CVEs in 2026'
   'VPN and remote access vulns'
   'Network device vulns'
   'Microsoft product vulns'
   'Top vendors in KEV'
   'Top CWE categories by avg CVSS score'
+  'CWE-78'
+  'Log4j'
 ], '","')
 
 resource appServicePlan 'Microsoft.Web/serverfarms@2023-12-01' = {
