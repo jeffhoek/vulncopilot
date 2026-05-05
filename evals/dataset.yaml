@@ -1,0 +1,104 @@
+# Golden dataset for offline RAG evals.
+#
+# PR 1 ships 5 entries spanning lookup / listing / analytics / reference
+# query intents, picked from the 15 production action buttons in
+# config.py:90. PR 2 will add the remaining 10.
+#
+# `ground_truth` strings are hand-authored from inspection of the seeded
+# rows in evals/fixtures/eval_db_seed.sql — NOT from running the current
+# agent (that would lock in current behavior as the baseline).
+#
+# Schema:
+#   id                — stable identifier (also used as pytest test id)
+#   query             — exact user-facing query string
+#   intent            — lookup | listing | analytics | reference
+#   expected_tool     — query | retrieve | either (advisory only in PR 1)
+#   ground_truth      — author-written ideal answer; faithfulness uses
+#                       answer+contexts, but PR 2 (answer_correctness)
+#                       needs this populated
+#   expected_cve_ids  — optional; powers context_recall in PR 2
+#   notes             — optional human commentary
+
+- id: cve_lookup_2026_25253
+  query: "CVE-2026-25253"
+  intent: lookup
+  expected_tool: query
+  ground_truth: |
+    CVE-2026-25253 is an OpenClaw (aka clawdbot or Moltbot) vulnerability
+    affecting versions before 2026.1.29. The product obtains a gatewayUrl
+    value from a query string and automatically opens a WebSocket
+    connection without prompting the user, sending a token value in the
+    process. NVD rates it CVSS 3.1 = 8.8 (HIGH). It is in the NVD dataset
+    (published 2026-02-01) but is not listed in CISA KEV.
+  expected_cve_ids:
+    - CVE-2026-25253
+  notes: |
+    Tests the agent's ability to acknowledge an NVD-only CVE rather than
+    incorrectly reporting "not found" when it isn't in KEV.
+
+- id: latest_kev_additions
+  query: "Latest KEV additions"
+  intent: listing
+  expected_tool: query
+  ground_truth: |
+    The most recent KEV additions (date_added 2026-04-20 through
+    2026-04-24) include: SimpleHelp Missing Authorization
+    (CVE-2024-57726), Samsung MagicINFO 9 Server Path Traversal
+    (CVE-2024-7399), D-Link DIR-823X Command Injection (CVE-2025-29635),
+    SimpleHelp Path Traversal (CVE-2024-57728), Marimo Remote Code
+    Execution (CVE-2026-39987), Microsoft Defender Insufficient
+    Granularity of Access Control (CVE-2026-33825), JetBrains TeamCity
+    Relative Path Traversal (CVE-2024-27199), Quest KACE SMA Improper
+    Authentication (CVE-2025-32975), PaperCut NG/MF Improper
+    Authentication (CVE-2023-27351), and Kentico Xperience Path Traversal
+    (CVE-2025-2749). The list should be ordered by date_added DESC.
+  notes: |
+    The seed includes the latest 50 KEV rows; ground truth covers the
+    top 10 by date.
+
+- id: top_vendors_kev
+  query: "Top vendors in KEV"
+  intent: analytics
+  expected_tool: query
+  ground_truth: |
+    Top vendors in the KEV dataset by row count are: Microsoft (8),
+    Apple (4), Cisco (4), Google (3), and Apache (3), with several
+    vendors tied at 2 entries (SimpleHelp, Ivanti, Fortinet, Synacor,
+    Adobe, etc.). The agent's SQL should GROUP BY vendor_project
+    ORDER BY count DESC.
+  notes: |
+    Analytics question — agent should hit the `query` tool, not
+    `retrieve`. Tool selection here is one of the harness's signals.
+
+- id: cwe_78
+  query: "CWE-78"
+  intent: reference
+  expected_tool: query
+  ground_truth: |
+    CWE-78 is "Improper Neutralization of Special Elements used in an
+    OS Command ('OS Command Injection')" — a Base-abstraction weakness.
+    It describes a class of bugs where a product constructs an OS
+    command using externally-influenced input from an upstream component
+    but fails to (or incorrectly) neutralize special elements that could
+    modify the intended OS command when it is sent to a downstream
+    component.
+
+- id: log4j
+  query: "Log4j"
+  intent: lookup
+  expected_tool: either
+  ground_truth: |
+    The seed contains four Apache Log4j vulnerabilities. CVE-2021-44228
+    (Log4Shell) is a remote code execution flaw in Log4j2's JNDI
+    lookup feature, added to KEV on 2021-12-10 (NVD CVSS 3.1 = 10.0
+    CRITICAL). CVE-2021-45046 is an incomplete-fix follow-on to
+    CVE-2021-44228, also in KEV (added 2023-05-01; NVD 9.0 CRITICAL).
+    CVE-2021-45105 (NVD 5.9 MEDIUM) is an uncontrolled-recursion
+    self-referential lookup issue in Log4j 2.0-alpha1 through 2.16.0.
+    CVE-2017-5645 (NVD 9.8 CRITICAL) affects Apache Log4j 2.x before
+    2.8.2 via a TCP/UDP socket server deserialization issue.
+  expected_cve_ids:
+    - CVE-2021-44228
+    - CVE-2021-45046
+    - CVE-2021-45105
+    - CVE-2017-5645

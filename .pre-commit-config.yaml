@@ -3,9 +3,14 @@ repos:
     rev: v6.0.0
     hooks:
       - id: trailing-whitespace
+        # Trailing whitespace inside the seed's content/notes fields is
+        # part of the dumped data; rewriting it would diverge from prod.
+        exclude: ^evals/fixtures/eval_db_seed\.sql$
       - id: end-of-file-fixer
       - id: check-yaml
       - id: check-added-large-files
+        # Frozen Postgres snapshot with 1536-dim embeddings per row; ~4 MB.
+        exclude: ^evals/fixtures/eval_db_seed\.sql$
       - id: check-merge-conflict
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
