@@ -16,6 +16,7 @@ import datetime as dt
 import json
 import os
 import sys
+from decimal import Decimal
 from pathlib import Path
 
 import asyncpg
@@ -47,6 +48,9 @@ def _to_json(value):
         return None
     if isinstance(value, dt.date):
         return value.isoformat()
+    if isinstance(value, Decimal):
+        # NUMERIC columns (e.g. CVSS scores) — float is precise enough at 3 sig figs.
+        return float(value)
     if isinstance(value, (list, tuple)):
         return [_to_json(v) for v in value]
     if hasattr(value, "tolist"):  # numpy array (pgvector)
