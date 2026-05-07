@@ -9,9 +9,11 @@ must be exported in the environment before running pytest — source your
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 from collections.abc import AsyncIterator
+from decimal import Decimal
 from pathlib import Path
 
 import asyncpg
@@ -99,6 +101,8 @@ _AUTO_COLUMNS = {"id"}
 # Columns that need conversion from JSON-friendly types back to native types.
 _VECTOR_COLUMNS = {"embedding"}
 _JSONB_COLUMNS = {"raw_json"}
+_DATE_COLUMNS = {"date_added", "due_date", "published", "last_modified"}
+_NUMERIC_COLUMNS = {"cvss_v31_score", "cvss_v2_score"}
 
 
 def _coerce(col: str, value):
@@ -108,6 +112,10 @@ def _coerce(col: str, value):
         return np.array(value, dtype=np.float32)
     if col in _JSONB_COLUMNS:
         return json.dumps(value)
+    if col in _DATE_COLUMNS:
+        return dt.date.fromisoformat(value)
+    if col in _NUMERIC_COLUMNS:
+        return Decimal(str(value))
     return value
 
 
@@ -140,6 +148,15 @@ async def eval_pool() -> AsyncIterator[asyncpg.Pool]:
     dsn = os.environ.get("EVAL_DATABASE_URL")
     if not dsn:
         pytest.skip("EVAL_DATABASE_URL is not set; skipping eval suite")
+    # Bootstrap the vector extension via a one-shot connection before the
+    # pool is created. The pool's init runs register_vector on every
+    # connection, which fails if the extension doesn't yet exist (happens
+    # against fresh pgvector containers).
+    bootstrap = await asyncpg.connect(dsn=dsn)
+    try:
+        await bootstrap.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    finally:
+        await bootstrap.close()
     pool = await asyncpg.create_pool(dsn=dsn, min_size=1, max_size=5, init=_init_connection)
     try:
         yield pool
