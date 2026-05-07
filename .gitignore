@@ -19,5 +19,5 @@ backup.sql
 
 .coverage
 
-# Per-run eval artifacts (seed SQL is committed; results.json is not)
+# Per-run eval artifacts (seed JSONL is committed; results.json is not)
 evals/results.json

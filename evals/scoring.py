@@ -9,13 +9,17 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from ragas import evaluate
 from ragas.dataset_schema import EvaluationDataset, SingleTurnSample
 from ragas.llms import LangchainLLMWrapper
 from ragas.metrics import faithfulness
 
-from evals.harness import EvalResult
+if TYPE_CHECKING:
+    # Avoid transitively importing rag.agent (which constructs the
+    # pydantic-ai Anthropic provider at import time, requiring a key).
+    from evals.harness import EvalResult
 
 
 @dataclass
