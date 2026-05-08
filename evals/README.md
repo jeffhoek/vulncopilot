@@ -73,15 +73,24 @@ when that button lands in the dataset (currently slated for PR 2).
 PR 1 ships **`faithfulness` only**. Ragas defines it as: of the claims in
 the agent's answer, what fraction are supported by the retrieved contexts?
 
-- **High score (>0.7):** answer is grounded in `retrieve` output.
-- **0.0:** typically means the agent used the `query` (SQL) tool and never
-  retrieved any embeddings, so `retrieved_contexts` is empty. Faithfulness
-  is undefined here, not a bug. PR 2 adds `answer_correctness` (compares
-  `response` to `ground_truth` directly) which scores SQL-driven answers
-  meaningfully.
+The harness folds output from **both** tools into `retrieved_contexts`:
 
-The `tools_used` field in `results.json` is the diagnostic: if you see
-`["query"]` and `faithfulness=0.0`, the metric simply doesn't apply.
+- `retrieve` (semantic search) → each chunk becomes a context entry.
+- `query` (SQL) → the formatted result table becomes a single context entry.
+
+This means faithfulness grades every answer uniformly — whether the agent
+reasoned over embedded documents or over a SQL result set, "did the answer
+stick to what the tool actually returned?" is a meaningful question.
+
+- **High score (>0.7):** answer is grounded in tool output.
+- **Low score (<0.4):** the agent's answer makes claims the tool returns
+  don't support — possible hallucination, or a metric/judge artifact.
+- **0.0 with `context_count: 0`:** the agent answered without calling any
+  data tool (or every tool call returned empty / errored). Cross-check
+  with `tools_used` and `answer` in `results.json`.
+
+The `tools_used` field in `results.json` shows the agent's tool path —
+useful when diagnosing why a question went one way or the other.
 
 ## Known footguns
 
