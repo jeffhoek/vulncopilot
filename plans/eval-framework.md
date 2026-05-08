@@ -302,3 +302,174 @@ End-to-end checks before declaring Phase 1 complete:
 - Weekly schedule fires (confirmed in Actions tab the following Monday)
 - evals/README.md walks a maintainer through: adding an entry, regenerating the
   seed, running locally, interpreting results
+
+---
+
+## PR 1 complete — addendum for PR 2
+
+PR 1 shipped on branch `evals-phase1` (4 commits). The **plan above is now
+the original spec**; this addendum captures what actually landed and what
+PR 2 inherits. Read both before starting PR 2.
+
+### Deviations from the original plan
+
+| Plan said | What shipped | Why |
+|---|---|---|
+| `eval_db_seed.sql` (pg_dump-style) | `eval_db_seed.jsonl` + asyncpg loader in `conftest.py` | SQL emission needed ~150 lines of escaping helpers (`_sql_str`, `_sql_vector`, `_sql_jsonb`); JSONL serializes natively and the loader is ~30 lines |
+| `evals/README.md` lands in PR 4 | Already in PR 1 | Maintainer-facing; cheap way to make the scaffolding self-explanatory |
+| Faithfulness extracts `retrieve` contexts only | Both `retrieve` *and* `query` returns fold into `contexts` | Without this, 4 of 5 PR-1 entries scored `faithfulness=0.0` (SQL-driven answers had no contexts to grade against). See `evals/harness.py:_extract_contexts_and_tools` |
+| `dataset.yaml` schema example only | 5 hand-authored entries with ground truths grounded in the seed | Per-entry ground truths must come from inspecting `eval_db_seed.jsonl`, not from the agent — the plan called this out, PR 1 followed it |
+| LLM judge mentioned generically | Wired via `langchain-anthropic` + `ragas.llms.LangchainLLMWrapper`; reads `EVAL_JUDGE_MODEL` (default `claude-haiku-4-5`) | Ragas ≥0.2 needs a `BaseRagasLLM`; the langchain wrapper is the path of least resistance |
+
+### Implementation decisions worth carrying into PR 2
+
+- **`EVAL_DATABASE_URL` skip-on-unset.** A bare `pytest evals/` from repo
+  root with no env set → all tests skip cleanly (no accidental hits to
+  prod). PR 3 (CI) will set this in the workflow `env:` block.
+- **Vector extension bootstrap.** `eval_pool` opens a one-shot connection
+  before pool creation to run `CREATE EXTENSION IF NOT EXISTS vector` —
+  required because the pool's `register_vector` init runs on every
+  connection acquire, including the one that would install the extension
+  via `SCHEMA_SQL`.
+- **JSONL loader uses an allowlist** of tables and columns
+  (`_ALLOWED_TABLES`, `_ALLOWED_COLUMNS` in `evals/conftest.py`) before
+  string-interpolating into INSERT statements. Neutralizes the S608
+  warning explicitly. Anything outside the allowlist raises — when PR 2
+  adds new columns to the seed, update both lists.
+- **`ragas==0.2.*` pinned** in `[dependency-groups] eval`. The 0.2 API
+  churn is real; don't bump without testing.
+- **Deferred imports of `rag.agent`** in `conftest.py` fixture bodies and
+  in `scoring.py` (TYPE_CHECKING-gated). This is what lets
+  `pytest --collect-only` work without `ANTHROPIC_API_KEY`. Don't
+  collapse those into top-level imports.
+- **`results.json` is gitignored**, written unconditionally by the
+  session-scoped `all_scores` fixture even on partial-failure runs.
+- **Action button ↔ dataset coupling.** Each `dataset.yaml` entry's
+  `query` field must match the corresponding production button text in
+  `config.py` / `.env.example`. If a button text changes, the dataset
+  entry's `query` must change with it. Documented in
+  `evals/README.md#action-buttons--dataset-coupling`.
+
+### Observations from PR 1's first end-to-end run
+
+Single run, frozen seed (kev=52, nvd=55, cwe=40), Claude Haiku as both
+agent and judge:
+
+| id | tool path | faithfulness |
+|---|---|---|
+| `cve_lookup_2026_25253` | query, query | 0.733 |
+| `latest_kev_additions`  | query | 0.977 |
+| `top_vendors_kev` | query | 0.643 |
+| `cwe_78` | query | **0.364** |
+| `log4j` | retrieve, query | 0.808 |
+
+- **`cwe_78` is a real product signal**, not a bug. The agent's answer
+  added an unsolicited `; rm -rf /` example and an external
+  cwe.mitre.org URL — neither in the SQL result. Faithfulness flagged
+  those as unsupported claims. Open question for PR 2: tune the system
+  prompt to discourage embellishment, or accept it as helpful
+  elaboration?
+- **All 5 entries hit `query` first.** The agent's system-prompt rules
+  ("for CVE ID lookups, query both KEV and NVD") direct it toward SQL
+  over semantic search. PR 2 entries that should hit `retrieve`
+  (`OpenClaw`, `VPN and remote access vulns`, `Network device vulns`,
+  `Microsoft product vulns`) will give us the first read on whether the
+  agent picks the right tool for each intent.
+- **Scores are non-deterministic** because the LLM judge is. The plan
+  calls for ≥3 baseline runs before setting thresholds in PR 4; PR 1
+  contributes the first.
+
+### PR 2 starting points
+
+#### The 10 entries to add
+
+Ordered by the production button list in `config.py` for traceability.
+Each maps 1:1 to a button:
+
+1. `ransomware_linked_vulns` — "Ransomware-linked vulns" (analytics,
+   query)
+2. `critical_vulns_active_exploits` — "Critical vulns with active
+   exploits" (analytics, query)
+3. `anthropic_claude` — "Anthropic Claude" (lookup, retrieve) — **see
+   open issue below**
+4. `openclaw` — "OpenClaw" (lookup, retrieve)
+5. `cve_2017_11882_refs` — "Reference URLs for CVE-2017-11882" (lookup,
+   query)
+6. `top_ai_vulns_2026` — "Top AI vulns in 2026" (analytics/lookup,
+   either)
+7. `vpn_remote_access_vulns` — "VPN and remote access vulns" (listing,
+   retrieve)
+8. `network_device_vulns` — "Network device vulns" (listing, retrieve)
+9. `microsoft_product_vulns` — "Microsoft product vulns" (listing,
+   retrieve)
+10. `top_cwe_by_avg_cvss` — "Top CWE categories by avg CVSS score"
+    (analytics, query)
+
+If any entry's ground truth needs data not in the current seed, add the
+relevant CVE-IDs / CWE-IDs to `SEED_CVE_IDS` / `SEED_CWES` in
+`evals/fixtures/build_seed.py`, regenerate, commit. Existing 50-row KEV
+slice + Log4j set should cover most.
+
+#### Adding the new metrics
+
+`scoring.py:METRICS` currently holds `[faithfulness]`. Add
+`context_recall` and `answer_correctness`:
+
+```python
+from ragas.metrics import answer_correctness, context_recall, faithfulness
+METRICS = [faithfulness, context_recall, answer_correctness]
+```
+
+Both new metrics work for every entry given Option A's context folding —
+no per-intent routing needed. What each adds:
+
+- `context_recall` — "of the claims in `reference` (ground_truth), what
+  fraction appear in `retrieved_contexts`?" Tests whether the tool
+  output *contained* the right information. Catches retrieval/query
+  gaps.
+- `answer_correctness` — compares `response` to `reference` directly
+  (factual + semantic similarity). Doesn't depend on `contexts`.
+  Catches "agent had the data but reasoned poorly."
+
+`test_offline_evals.py` already iterates over `METRIC_NAMES`, so the
+parametrized output and per-row guard will pick up the new metrics
+automatically. No assertion changes needed (PR 4 adds thresholds).
+
+#### Dataset schema implications
+
+The `expected_cve_ids` field in `dataset.yaml` is **not** what Ragas's
+`context_recall` consumes — Ragas uses `reference` (ground_truth). The
+field is a human-maintained recall hint, useful for debugging or for a
+custom metric later. Keep populating it where it's natural; don't
+contort it.
+
+### Open product questions PR 2 should resolve
+
+1. **"Anthropic Claude" button.** The bare button currently returns the
+   agent's intro message instead of vulnerability data; appending
+   "vulns" ("Anthropic Claude vulns") makes it work. Decide before
+   adding the dataset entry: change the button text in `config.py` /
+   `.env.example`, *or* fix the system prompt to handle bare entity
+   names. Either way, the dataset entry's `query` must match what the
+   button actually sends. Other buttons in the list (`OpenClaw`, vendor
+   names) may need the same fix.
+2. **Embellishment vs. helpfulness.** `cwe_78`'s 0.364 score reflects
+   the agent volunteering content not grounded in tool output. Is that
+   desirable? If yes, accept the lower faithfulness as the cost of
+   helpful elaboration. If no, tighten the system prompt and re-run to
+   confirm the score moves.
+
+### Files PR 2 will touch
+
+- `evals/dataset.yaml` — append 10 entries, possibly backfill
+  `expected_cve_ids` on existing 5
+- `evals/scoring.py` — add 2 metrics to `METRICS`
+- `evals/fixtures/build_seed.py` + `eval_db_seed.jsonl` — only if new
+  questions need data not in the current seed
+- `evals/conftest.py` `_ALLOWED_COLUMNS` — only if seed schema grows
+- `evals/README.md` — extend "Interpreting scores" with the two new
+  metrics
+- `config.py` / `.env.example` — only if the "Anthropic Claude" button
+  fix lives here
+
+No CI workflow yet (PR 3), no thresholds yet (PR 4).

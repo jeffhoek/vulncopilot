@@ -6,6 +6,8 @@ repos:
       - id: end-of-file-fixer
       - id: check-yaml
       - id: check-added-large-files
+        # Frozen Postgres snapshot with 1536-dim embeddings per row; ~4 MB.
+        exclude: ^evals/fixtures/eval_db_seed\.jsonl$
       - id: check-merge-conflict
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
