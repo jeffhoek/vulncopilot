@@ -11,10 +11,10 @@ scored on three Ragas metrics: `faithfulness`, `context_recall`, and
 
 | | PR 1 | PR 2 | PR 3 |
 |---|---|---|---|
-| Dataset entries | 5 | **15 ✓** | 15 |
-| Metrics | faithfulness | **+ context_recall, answer_correctness ✓** | same |
-| Baselines | — | — | ≥3 `run-*.json` snapshots committed |
-| Thresholds | advisory | **advisory ✓** | hard floors (`mean − 1σ`) |
+| Dataset entries | 5 | **15 ✓** | 15 ✓ |
+| Metrics | faithfulness | **+ context_recall, answer_correctness ✓** | same ✓ |
+| Baselines | — | — | **≥3 `run-*.json` snapshots committed ✓** |
+| Thresholds | advisory | **advisory ✓** | **hard floors (`mean − 1σ`) ✓** |
 
 The GitHub Actions workflow originally scoped as PR 3 is **deferred** —
 revisited once the feature is merged to main. See
@@ -80,6 +80,24 @@ git add evals/baselines/
 Aim for ≥3 snapshots from independent runs before deriving thresholds —
 the LLM judge introduces enough noise that a single run isn't a stable
 baseline.
+
+### Deriving thresholds
+
+Per-metric hard floors live in [`thresholds.py`](thresholds.py) and are
+derived from the committed baselines:
+
+```bash
+uv run python -m evals.derive_thresholds
+```
+
+The script pools every per-entry score across all `evals/baselines/run-*.json`
+files (skipping NaN — judge noise, not signal), computes `mean − 1σ` per
+metric using population stdev, prints an audit table, and overwrites
+[`thresholds.py`](thresholds.py).
+
+Re-run it after committing a new baseline. It refuses to run with fewer
+than 3 baseline files or fewer than 5 non-NaN observations for any
+metric; both guards are encoded so degenerate floors can't slip in.
 
 ## Adding a golden question
 
@@ -159,6 +177,17 @@ date wrong.
 - **Low (<0.4):** material disagreement with the hand-authored ground
   truth. Read both side by side before assuming the agent is wrong — the
   ground truth itself can be stale once the seed is regenerated.
+
+### Threshold failures
+
+A failing assertion (`<metric>=<value> below floor <floor>`) does **not**
+abort the run before scoring — `results.json` is still written by the
+session-scoped fixture, so you can inspect every score even when one row
+trips a floor. NaN scores are skipped, not failed: the judge occasionally
+emits NaN for `answer_correctness` and treating that as a regression
+would make the suite flaky run-to-run. Before assuming a real
+regression, re-run once to rule out judge noise — it's the most common
+cause of a single row dipping below the floor.
 
 ### Tool path
 
