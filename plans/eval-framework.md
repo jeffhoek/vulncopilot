@@ -26,10 +26,14 @@ were just curated by user-journey grouping, so they're a strong starting point.
 - Pytest-based eval harness that invokes `rag_agent.run()` programmatically
 - Ragas scorers: `context_recall`, `answer_correctness`, `faithfulness`
 - Frozen Postgres+pgvector fixture so eval runs are deterministic
-- New GitHub Actions workflow (manual + PR-paths-filter + weekly cron)
-- Score artifacts uploaded per run; advisory thresholds in the first iteration
+- Baseline runs captured locally and committed under `evals/baselines/`
+- Score artifacts written to `evals/results.json`; advisory thresholds in
+  PRs 1-2, hard floors in PR 3
 
 **Out of scope (deferred to Phase 2 or beyond):**
+- GitHub Actions workflow — deferred until the feature is merged to main.
+  Local runs against the frozen seed produce identical numbers, so CI adds
+  no signal until there are PRs to gate or a stable baseline to drift-check.
 - Logfire online sampling and live-traffic scoring
 - autoevals (Ragas covers the listed metrics; autoevals can layer in later if
   a metric Ragas lacks becomes important)
@@ -161,70 +165,72 @@ LLM judge for Ragas: Anthropic Claude Haiku (same as the agent), configurable
 via `EVAL_JUDGE_MODEL` env var. Keeps cost low; judge model can be upgraded if
 its scoring proves noisy.
 
-### CI workflow
+### CI workflow — deferred
 
-`.github/workflows/evals.yml` — separate from
-[.github/workflows/test.yml](../.github/workflows/test.yml) to avoid slowing PR
-feedback on changes that can't affect eval scores.
+The GitHub Actions workflow originally scoped here is deferred until the
+eval feature is merged to main. Rationale: with a frozen seed DB and
+dataset, local runs produce identical numbers, so CI adds no signal until
+there are PRs to gate or a stable baseline to drift-check. PR 3
+(thresholds) consumes baselines captured locally — see "Baselines" below.
 
-Triggers:
-- `workflow_dispatch` — manual runs anytime
-- `pull_request` with `paths:` filter on `rag/**`, `config.py`, `evals/**`,
-  `pyproject.toml`, `uv.lock` — runs only when a change could plausibly affect
-  scores. This is the primary signal.
-- `schedule: cron 0 6 * * 1` — weekly Monday 6am UTC. Catches silent drift in
-  upstream Claude/OpenAI APIs and breakage from auto-updated deps. ~$4/mo.
+Prerequisites that would justify reviving this section:
+- Eval feature merged to main (gives `pull_request`-triggered runs
+  something to compare against).
+- ≥3 baselines committed under `evals/baselines/` (gives the threshold
+  floors a stable reference point).
+- PR 3 thresholds landed (turns the workflow from advisory into a real
+  signal).
 
-(No nightly. With a frozen seed DB and frozen dataset, day-over-day runs
-produce identical numbers — weekly gives the same drift-detection coverage at
-~7× lower cost.)
+Reference sketch for the eventual revival (preserved so nothing is lost):
+`.github/workflows/evals.yml`, separate from
+[.github/workflows/test.yml](../.github/workflows/test.yml). Triggers:
+`workflow_dispatch`, `pull_request` with `paths:` filter on `rag/**`,
+`config.py`, `evals/**`, `pyproject.toml`, `uv.lock`, and
+`schedule: cron 0 6 * * 1`. Steps: Postgres 16 + pgvector service
+container, load `evals/fixtures/eval_db_seed.jsonl`, `uv sync --group
+eval`, `uv run pytest evals/ -v --tb=short`, upload `evals/results.json`
+artifact. Job-level env: `EVAL_DATABASE_URL`, `EVAL_JUDGE_MODEL`,
+`OPENAI_API_KEY`, `ANTHROPIC_API_KEY` (the latter two are already
+configured for the existing Claude Code workflow).
 
-Job steps:
-1. Postgres 16 + pgvector service container (`pgvector/pgvector:pg16`)
-2. Restore `evals/fixtures/eval_db_seed.sql`
-3. `uv sync --group eval`
-4. `uv run pytest evals/ -v --tb=short`
-5. Upload `evals/results.json` as workflow artifact
-6. (Future) Post a summary comment on the PR with score deltas vs. main
+### Baselines
 
-`results.json` is written unconditionally by the session-scoped fixture in
-`evals/conftest.py` (which delegates to `evals/scoring.py`) — no custom
-pytest flag is needed. This avoids registering a `--eval-report` option via
-`pytest_addoption` and keeps the CI step a vanilla `pytest` invocation.
+Baseline runs are captured locally and committed under `evals/baselines/`.
+This is the source of truth PR 3 reads from to derive hard floors.
 
-Workflow `env:` block (job-level, so all steps inherit):
+Capture command (run after a clean local `uv run pytest evals/`):
 
-```yaml
-env:
-  EVAL_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
-  EVAL_JUDGE_MODEL: claude-haiku-4-5
-  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+```bash
+mkdir -p evals/baselines
+cp evals/results.json evals/baselines/run-$(date +%Y%m%d-%H%M%S).json
+git add evals/baselines/
 ```
 
-- `EVAL_DATABASE_URL` mirrors the [tests/conftest.py:55](../tests/conftest.py)
-  `TEST_DATABASE_URL` convention and is read by `evals/conftest.py` to build
-  the eval DB pool. Value points at the Postgres service container above.
-- `EVAL_JUDGE_MODEL` makes the Ragas judge model explicit. `claude-haiku-4-5`
-  is the documented default; override per workflow run if needed.
+Format: full per-entry/per-metric JSON dumps — same shape `scoring.py`
+emits. Per-entry detail is preserved on purpose: when one row drags a
+metric down, you want to know which one without re-running.
 
-Secrets `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are already in the repo for
-the existing Claude Code workflow.
+Gitignore: the existing `.gitignore` rule scopes narrowly to
+`evals/results.json` (the working file). `evals/baselines/run-*.json`
+is tracked by default — no rule change needed.
 
 ### Thresholds — staged rollout
 
-Phase 1.0 (first PR): scorers run, results recorded, **no assertions**. Goal:
-collect baseline scores across ≥3 runs.
+PRs 1-2 (shipped): scorers run, results recorded, **no assertions**.
+Advisory mode — goal was to collect baseline scores from clean runs.
 
-Phase 1.1 (follow-up PR after baseline): hard floors applied, derived from
-baseline mean − 1σ. Strawman starting points if baseline data isn't available:
+**PR 3** (was PR 4): hard floors applied, derived from baseline `mean − 1σ`
+per metric. Threshold-derivation script reads every
+`evals/baselines/run-*.json`, computes per-metric mean and σ across runs,
+and writes the floors into `scoring.py`. Strawman starting points if
+baseline data is sparse:
 - `context_recall ≥ 0.70`
 - `faithfulness ≥ 0.80`
 - `answer_correctness ≥ 0.60`
 
-Failures fail the eval workflow. They do not block PR merges (eval workflow is
-not part of required checks) — this is a signal, not a gate, until the
-framework proves stable.
+Failures fail the local eval run. They do not block PR merges (no CI
+workflow yet) — this is a signal, not a gate, until the framework proves
+stable.
 
 ## Cost estimate
 
@@ -251,11 +257,13 @@ evals/
 ├── harness.py                     # run_query + EvalResult + context extraction
 ├── scoring.py                     # Ragas wrapper + threshold logic
 ├── test_offline_evals.py          # parametrized pytest entrypoint
+├── baselines/                     # committed run-*.json snapshots; PR 3 reads
+│   └── run-YYYYMMDD-HHMMSS.json   # these to derive hard floors
 └── fixtures/
     ├── build_seed.py              # one-time generator from dev DB
-    └── eval_db_seed.sql           # committed snapshot
+    └── eval_db_seed.jsonl         # committed snapshot
 
-.github/workflows/evals.yml        # new workflow, separate from test.yml
+# Deferred: .github/workflows/evals.yml — see "CI workflow — deferred" above
 
 pyproject.toml                     # add `[dependency-groups] eval` with
                                    # ragas, datasets, pyyaml
@@ -274,34 +282,38 @@ to existing deps).
 - [`config.py:90`](../config.py) — `action_buttons` setting (source of seed
   entries)
 - [`.github/workflows/test.yml`](../.github/workflows/test.yml) — uv setup
-  pattern copied into evals.yml
+  pattern to copy into `evals.yml` if/when the deferred CI workflow is
+  revived
 
 ## Iteration plan
 
-1. **PR 1 — scaffolding**: dataset.yaml (5 entries), harness, conftest, one
-   scorer (`faithfulness`), seed fixture, local-only run
-2. **PR 2 — full dataset + scorers**: add remaining 10 entries + `context_recall`
-   + `answer_correctness`
-3. **PR 3 — CI**: add `.github/workflows/evals.yml`, run baseline, upload
-   artifacts, no assertions
-4. **PR 4 — thresholds**: read baseline scores, apply hard floors, document in
-   evals/README.md
+1. **PR 1 — scaffolding** ✓ (shipped): dataset.yaml (5 entries), harness,
+   conftest, one scorer (`faithfulness`), seed fixture, local-only run
+2. **PR 2 — full dataset + scorers** ✓ (shipped): add remaining 10 entries
+   + `context_recall` + `answer_correctness`
+3. **PR 3 — thresholds** (was PR 4): commit ≥3 baseline runs under
+   `evals/baselines/`, add a threshold-derivation script that computes
+   `mean − 1σ` per metric, apply hard floors in `scoring.py`, document
+   in `evals/README.md`.
+4. **Deferred — CI workflow** (was PR 3): `.github/workflows/evals.yml`,
+   revisit once the feature is merged to main and PR 3 thresholds are
+   stable. See "CI workflow — deferred" above.
 
 ## Verification
 
 End-to-end checks before declaring Phase 1 complete:
 
 - `uv run pytest evals/ -v` passes locally against a real seeded DB
-- Manual `gh workflow run evals.yml` succeeds and uploads `results.json`
-- One golden entry intentionally given a wrong `ground_truth` → eval fails with
-  per-metric scores in the output (confirms scorers are wired)
-- A PR that modifies `rag/agent.py` triggers the workflow (confirms paths
-  filter)
-- A PR that modifies only `README.md` does NOT trigger the workflow (confirms
-  the filter is scoped, not a catch-all)
-- Weekly schedule fires (confirmed in Actions tab the following Monday)
-- evals/README.md walks a maintainer through: adding an entry, regenerating the
-  seed, running locally, interpreting results
+- `evals/baselines/` contains ≥3 `run-*.json` files captured from clean
+  local runs
+- The PR 3 threshold-derivation script reads them and emits
+  `mean − 1σ` per metric, written into `scoring.py`
+- One golden entry intentionally given a wrong `ground_truth` → eval fails
+  with per-metric scores in the output (confirms scorers are wired)
+- A locally-run failing entry trips the new hard floor (confirms PR 3
+  thresholds are wired)
+- evals/README.md walks a maintainer through: adding an entry, regenerating
+  the seed, running locally, snapshotting a baseline, interpreting results
 
 ---
 
@@ -310,6 +322,12 @@ End-to-end checks before declaring Phase 1 complete:
 PR 1 shipped on branch `evals-phase1` (4 commits). The **plan above is now
 the original spec**; this addendum captures what actually landed and what
 PR 2 inherits. Read both before starting PR 2.
+
+> **Note (post-PR-2):** PR 2 has since shipped and the iteration plan above
+> has been revised — the GitHub Actions workflow (originally PR 3) is
+> deferred, and the thresholds PR (originally PR 4) is now PR 3. References
+> to "PR 3 (CI)" or "PR 4" within this addendum reflect the *original*
+> numbering and remain for historical accuracy.
 
 ### Deviations from the original plan
 
