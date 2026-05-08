@@ -67,7 +67,7 @@ var actionButtons = join([
   'Latest KEV additions'
   'Ransomware-linked vulns'
   'Critical vulns with active exploits'
-  'Anthropic Claude'
+  'Anthropic Claude vulns'
   'CVE-2026-25253'
   'OpenClaw'
   'Reference URLs for CVE-2017-11882'

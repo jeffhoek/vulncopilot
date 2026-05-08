@@ -1,8 +1,9 @@
 """Ragas wrapper for the offline eval harness.
 
-PR 1 ships `faithfulness` only; PR 2 will add `context_recall` and
-`answer_correctness`. The judge LLM is configured via EVAL_JUDGE_MODEL
-(default claude-haiku-4-5) and reuses ANTHROPIC_API_KEY.
+Scores every (entry, result) pair in a single batch on three metrics:
+`faithfulness`, `context_recall`, and `answer_correctness`. The judge LLM
+is configured via EVAL_JUDGE_MODEL (default claude-haiku-4-5) and reuses
+ANTHROPIC_API_KEY.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from typing import TYPE_CHECKING
 from ragas import evaluate
 from ragas.dataset_schema import EvaluationDataset, SingleTurnSample
 from ragas.llms import LangchainLLMWrapper
-from ragas.metrics import faithfulness
+from ragas.metrics import answer_correctness, context_recall, faithfulness
 
 if TYPE_CHECKING:
     # Avoid transitively importing rag.agent (which constructs the
@@ -33,7 +34,7 @@ class GoldenEntry:
     notes: str = ""
 
 
-METRICS = [faithfulness]
+METRICS = [faithfulness, context_recall, answer_correctness]
 METRIC_NAMES = [m.name for m in METRICS]
 
 

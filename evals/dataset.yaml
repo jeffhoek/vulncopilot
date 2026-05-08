@@ -1,22 +1,23 @@
 # Golden dataset for offline RAG evals.
 #
-# PR 1 ships 5 entries spanning lookup / listing / analytics / reference
-# query intents, picked from the 15 production action buttons in
-# config.py:90. PR 2 will add the remaining 10.
+# 15 entries — one per production action button in config.py:90 — spanning
+# lookup / listing / analytics / reference intents.
 #
 # `ground_truth` strings are hand-authored from inspection of the seeded
-# rows in evals/fixtures/eval_db_seed.sql — NOT from running the current
+# rows in evals/fixtures/eval_db_seed.jsonl — NOT from running the current
 # agent (that would lock in current behavior as the baseline).
 #
 # Schema:
 #   id                — stable identifier (also used as pytest test id)
 #   query             — exact user-facing query string
 #   intent            — lookup | listing | analytics | reference
-#   expected_tool     — query | retrieve | either (advisory only in PR 1)
-#   ground_truth      — author-written ideal answer; faithfulness uses
-#                       answer+contexts, but PR 2 (answer_correctness)
-#                       needs this populated
-#   expected_cve_ids  — optional; powers context_recall in PR 2
+#   expected_tool     — query | retrieve | either (advisory; not asserted)
+#   ground_truth      — author-written ideal answer; consumed by Ragas as
+#                       `reference` for both context_recall and
+#                       answer_correctness
+#   expected_cve_ids  — optional human-maintained recall hint; NOT what
+#                       Ragas's context_recall actually consumes (it reads
+#                       `reference`). Populate where natural.
 #   notes             — optional human commentary
 
 - id: cve_lookup_2026_25253
@@ -61,10 +62,10 @@
   intent: analytics
   expected_tool: query
   ground_truth: |
-    Top vendors in the KEV dataset by row count are: Microsoft (8),
-    Apple (4), Cisco (4), Google (3), and Apache (3), with several
-    vendors tied at 2 entries (SimpleHelp, Ivanti, Fortinet, Synacor,
-    Adobe, etc.). The agent's SQL should GROUP BY vendor_project
+    Top vendors in the KEV dataset by row count are: Microsoft (9),
+    Apple (4), Cisco (4), Apache (3), Fortinet (3), Google (3), and
+    Ivanti (3), with several vendors tied at 2 entries (Adobe,
+    SimpleHelp, Synacor). The agent's SQL should GROUP BY vendor_project
     ORDER BY count DESC.
   notes: |
     Analytics question — agent should hit the `query` tool, not
@@ -102,3 +103,232 @@
     - CVE-2021-45046
     - CVE-2021-45105
     - CVE-2017-5645
+
+# ─── PR 2 entries ────────────────────────────────────────────────────────
+# Each maps 1:1 to a button in .env.example's ACTION_BUTTONS list.
+
+- id: ransomware_linked_vulns
+  query: "Ransomware-linked vulns"
+  intent: analytics
+  expected_tool: query
+  ground_truth: |
+    KEV entries with `known_ransomware_campaign_use = 'Known'` in the seed
+    include Apache Log4j2 (CVE-2021-44228, CVE-2021-45046), Microsoft Office
+    (CVE-2017-11882), Microsoft Exchange Server (CVE-2023-21529), Fortinet
+    FortiOS SSL VPN (CVE-2018-13379), SonicWall SonicOS SSLVPN
+    (CVE-2024-53704), Ivanti Connect Secure (CVE-2025-0282), JetBrains
+    TeamCity (CVE-2024-27199), PaperCut NG/MF (CVE-2023-27351), and Cisco
+    Secure Firewall Management Center / FMC (CVE-2026-20131). The agent
+    should filter `kev_vulnerabilities` on `known_ransomware_campaign_use`.
+  expected_cve_ids:
+    - CVE-2021-44228
+    - CVE-2021-45046
+    - CVE-2017-11882
+    - CVE-2018-13379
+    - CVE-2024-53704
+    - CVE-2025-0282
+    - CVE-2023-27351
+    - CVE-2024-27199
+    - CVE-2023-21529
+    - CVE-2026-20131
+  notes: |
+    Tests filter-on-flag analytics. Faithfulness will reflect whether
+    the agent invents CVEs not actually in the seed.
+
+- id: critical_vulns_active_exploits
+  query: "Critical vulns with active exploits"
+  intent: analytics
+  expected_tool: query
+  ground_truth: |
+    "Active exploits" in this dataset means present in CISA KEV; "critical"
+    means NVD `cvss_v31_severity = 'CRITICAL'`. Joining on cve_id, the
+    seeded matches include Apache Log4j2 CVE-2021-44228 (10.0), SonicWall
+    SonicOS CVE-2024-53704 (9.8), Fortinet FortiOS SSL VPN CVE-2018-13379
+    (9.1), Apache Log4j2 CVE-2021-45046 (9.0), and Ivanti Connect Secure
+    CVE-2025-0282 (9.0). All five also carry `known_ransomware_campaign_use
+    = 'Known'`. The agent should JOIN kev_vulnerabilities and
+    nvd_vulnerabilities on cve_id and filter by cvss_v31_severity.
+  expected_cve_ids:
+    - CVE-2021-44228
+    - CVE-2024-53704
+    - CVE-2018-13379
+    - CVE-2021-45046
+    - CVE-2025-0282
+  notes: |
+    JOIN test — the agent must cross-reference KEV (active-exploitation
+    proxy) and NVD (severity).
+
+- id: anthropic_claude
+  query: "Anthropic Claude vulns"
+  intent: lookup
+  expected_tool: retrieve
+  ground_truth: |
+    Three Anthropic-related CVEs are seeded, all NVD-only (none in CISA KEV).
+    CVE-2026-39861 (CVSS 10.0 CRITICAL) is a Claude Code sandbox escape via
+    symlinks created by sandboxed processes — fixed in Claude Code 2.1.64.
+    CVE-2026-25723 (6.5 MEDIUM) lets attackers bypass Claude Code's
+    file-write restrictions through piped sed operations with echo — fixed
+    in 2.0.55. CVE-2025-34072 is a data-exfiltration flaw in Anthropic's
+    deprecated Slack MCP Server: an AI agent processing untrusted data
+    could be manipulated into generating Slack messages whose automatic
+    link unfurling leaked secrets.
+  expected_cve_ids:
+    - CVE-2026-39861
+    - CVE-2026-25723
+    - CVE-2025-34072
+  notes: |
+    Button text was renamed from "Anthropic Claude" to "Anthropic Claude
+    vulns" in .env.example, app-service.bicep, and k8s/configmap.yaml so
+    the bare entity name doesn't trigger the agent's intro response.
+    Semantic-search question — `retrieve` should fire.
+
+- id: openclaw
+  query: "OpenClaw"
+  intent: lookup
+  expected_tool: retrieve
+  ground_truth: |
+    OpenClaw (also known as clawdbot or Moltbot) is the product affected
+    by CVE-2026-25253 — the only OpenClaw entry in the seed. Versions
+    before 2026.1.29 obtain a `gatewayUrl` from a query string and
+    automatically open a WebSocket connection without prompting,
+    transmitting a token value. NVD CVSS 3.1 = 8.8 (HIGH); not in CISA KEV
+    (NVD-only, published 2026-02-01).
+  expected_cve_ids:
+    - CVE-2026-25253
+  notes: |
+    Bare-entity-name lookup. If the agent returns an intro message
+    instead of vuln data (the failure mode that prompted the
+    "Anthropic Claude" rename), this entry will surface it.
+
+- id: cve_2017_11882_refs
+  query: "Reference URLs for CVE-2017-11882"
+  intent: lookup
+  expected_tool: query
+  ground_truth: |
+    NVD lists 10 reference URLs for CVE-2017-11882 (Microsoft Office memory
+    corruption / RCE): the official Microsoft MSRC advisory at
+    portal.msrc.microsoft.com, two 0patch.blogspot.com posts on the patch
+    history, four GitHub repositories with public PoCs (embedi, unamer,
+    rxwx, 0x09AL/CVE-2017-11882-metasploit), securityfocus.com BID 101757,
+    securitytracker.com 1039783, and a reversingminds-blog post titled
+    "Fileless attack in Word without macros". The agent should select
+    `reference_urls` from `nvd_vulnerabilities`.
+  expected_cve_ids:
+    - CVE-2017-11882
+  notes: |
+    Tests the agent's awareness of NVD-specific columns
+    (`reference_urls`).
+
+- id: top_ai_vulns_2026
+  query: "Top AI vulns in 2026"
+  intent: analytics
+  expected_tool: either
+  ground_truth: |
+    The seeded AI/agentic-tooling CVEs published in 2026, ranked by
+    CVSS, are: CVE-2026-39861 (Claude Code sandbox symlink escape, 10.0
+    CRITICAL), CVE-2026-25592 (Microsoft Semantic Kernel arbitrary file
+    write in the SessionsPython tool, 9.9 CRITICAL), CVE-2026-33873
+    (Langflow Agentic Assistant RCE via LLM-generated Python during
+    validation, 9.9 CRITICAL), and CVE-2026-34070 (LangChain
+    `prompts.loading` directory-traversal file read, 7.5 HIGH).
+    CVE-2026-25723 (Claude Code piped-sed file-write bypass, 6.5 MEDIUM)
+    is also in scope. None are in CISA KEV.
+  expected_cve_ids:
+    - CVE-2026-39861
+    - CVE-2026-25592
+    - CVE-2026-33873
+    - CVE-2026-34070
+    - CVE-2026-25723
+  notes: |
+    Open-ended analytics — works via either retrieve (semantic) or
+    query (filter NVD by description / published year).
+
+- id: vpn_remote_access_vulns
+  query: "VPN and remote access vulns"
+  intent: listing
+  expected_tool: retrieve
+  ground_truth: |
+    Three VPN / remote-access KEV entries are seeded. Fortinet FortiOS
+    SSL VPN CVE-2018-13379 is a path-traversal flaw under SSL VPN web
+    portal allowing unauthenticated attackers to download system files
+    (NVD 9.1 CRITICAL, ransomware-linked). SonicWall SonicOS
+    CVE-2024-53704 is an SSLVPN improper-authentication bypass (NVD 9.8
+    CRITICAL, ransomware-linked). Ivanti Connect Secure / Policy Secure
+    / Neurons-for-ZTA CVE-2025-0282 is an unauthenticated stack-based
+    buffer overflow yielding RCE (NVD 9.0 CRITICAL, ransomware-linked).
+  expected_cve_ids:
+    - CVE-2018-13379
+    - CVE-2024-53704
+    - CVE-2025-0282
+  notes: |
+    Semantic-search question — agent should hit `retrieve` rather than
+    SQL filter on a hard-coded "VPN" string.
+
+- id: network_device_vulns
+  query: "Network device vulns"
+  intent: listing
+  expected_tool: retrieve
+  ground_truth: |
+    Network-device KEV entries in the seed include Cisco Catalyst SD-WAN
+    Manager (CVE-2026-20122, CVE-2026-20128, CVE-2026-20133), Cisco
+    Secure Firewall Management Center / FMC (CVE-2026-20131), D-Link
+    DIR-823X command injection (CVE-2025-29635), Fortinet FortiOS SSL
+    VPN (CVE-2018-13379), Ivanti Connect Secure / ZTA Gateways
+    (CVE-2025-0282), Ivanti Endpoint Manager Mobile / EPMM
+    (CVE-2026-1340), Ivanti Endpoint Manager / EPM (CVE-2026-1603), and
+    SonicWall SonicOS SSLVPN (CVE-2024-53704).
+  expected_cve_ids:
+    - CVE-2026-20122
+    - CVE-2026-20128
+    - CVE-2026-20131
+    - CVE-2026-20133
+    - CVE-2025-29635
+    - CVE-2018-13379
+    - CVE-2025-0282
+    - CVE-2024-53704
+  notes: |
+    Semantic question with no tight SQL filter — `retrieve` is the
+    expected path.
+
+- id: microsoft_product_vulns
+  query: "Microsoft product vulns"
+  intent: listing
+  expected_tool: retrieve
+  ground_truth: |
+    Nine Microsoft KEV entries are seeded across Office (CVE-2009-0238,
+    CVE-2017-11882), Visual Basic for Applications / VBA (CVE-2012-1854),
+    Exchange Server (CVE-2023-21529), Windows (CVE-2023-36424,
+    CVE-2025-60710), SharePoint (CVE-2026-20963, CVE-2026-32201), and
+    Defender (CVE-2026-33825). Vulnerabilities cover memory corruption,
+    deserialization of untrusted data, insecure library loading,
+    out-of-bounds reads, link following, improper input validation, and
+    insufficient access-control granularity.
+  expected_cve_ids:
+    - CVE-2009-0238
+    - CVE-2017-11882
+    - CVE-2012-1854
+    - CVE-2023-21529
+    - CVE-2023-36424
+    - CVE-2025-60710
+    - CVE-2026-20963
+    - CVE-2026-32201
+    - CVE-2026-33825
+
+- id: top_cwe_by_avg_cvss
+  query: "Top CWE categories by avg CVSS score"
+  intent: analytics
+  expected_tool: query
+  ground_truth: |
+    Joining `nvd_vulnerabilities.cwes` against `cwe_definitions` and
+    averaging `cvss_v31_score` per CWE, the seed's highest-scoring
+    categories are CWE-61 (UNIX Symbolic Link Following, 10.0),
+    CWE-400 (Uncontrolled Resource Consumption, 10.0), CWE-913 (Improper
+    Control of Dynamically-Managed Code Resources, 9.9), CWE-862
+    (Missing Authorization, 9.9), CWE-522 (Insufficiently Protected
+    Credentials, 9.8), and CWE-502 (Deserialization of Untrusted Data,
+    9.7). The agent's SQL should JOIN nvd_vulnerabilities (unnesting
+    `cwes`) with cwe_definitions on cwe_id, GROUP BY cwe_id/name, and
+    ORDER BY AVG(cvss_v31_score) DESC.
+  notes: |
+    Single-row weakness counts can pull averages to 10.0 in a small
+    seed; that's expected behavior of the AVG() aggregate, not a bug.
