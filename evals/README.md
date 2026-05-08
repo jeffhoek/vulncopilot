@@ -9,12 +9,17 @@ The suite ships 15 golden questions (one per production action button)
 scored on three Ragas metrics: `faithfulness`, `context_recall`, and
 `answer_correctness`. Status by PR per [`plans/eval-framework.md`](../plans/eval-framework.md):
 
-| | PR 1 | PR 2 | PR 3 | PR 4 |
-|---|---|---|---|---|
-| Dataset entries | 5 | **15 ✓** | 15 | 15 |
-| Metrics | faithfulness | **+ context_recall, answer_correctness ✓** | same | same |
-| CI workflow | — | — | adds .github/workflows/evals.yml | same |
-| Thresholds | advisory | **advisory ✓** | advisory | hard floors |
+| | PR 1 | PR 2 | PR 3 |
+|---|---|---|---|
+| Dataset entries | 5 | **15 ✓** | 15 |
+| Metrics | faithfulness | **+ context_recall, answer_correctness ✓** | same |
+| Baselines | — | — | ≥3 `run-*.json` snapshots committed |
+| Thresholds | advisory | **advisory ✓** | hard floors (`mean − 1σ`) |
+
+The GitHub Actions workflow originally scoped as PR 3 is **deferred** —
+revisited once the feature is merged to main. See
+[`plans/eval-framework.md`](../plans/eval-framework.md) → "CI workflow —
+deferred".
 
 ## Pieces
 
@@ -44,10 +49,37 @@ EVAL_DATABASE_URL="postgresql://postgres:postgres@localhost:55433/postgres" \
 
 # 4. Inspect results.
 cat evals/results.json | jq
+
+# 5. (Optional) Snapshot this run as a baseline for PR 3 thresholds.
+#    See "Baselines" below.
 ```
 
 If `EVAL_DATABASE_URL` is unset, the suite skips cleanly — useful as a guardrail
 so a default `pytest` from repo root never accidentally hits a real DB.
+
+## Baselines
+
+PR 3's hard floors (`mean − 1σ` per metric) are derived from a small set of
+clean local runs committed under `evals/baselines/`. After a clean run:
+
+```bash
+mkdir -p evals/baselines
+cp evals/results.json evals/baselines/run-$(date +%Y%m%d-%H%M%S).json
+git add evals/baselines/
+```
+
+- **Why commit each run:** the floors and their derivation must be auditable
+  and reproducible. Anyone re-running the threshold script should land on
+  the same numbers.
+- **Why the full JSON, not a flattened summary:** when one entry drags a
+  metric down, you'll want per-row detail to see *which* — without
+  re-running the full suite.
+- **Gitignore:** `evals/results.json` (the working file) stays gitignored;
+  only the timestamped snapshots in `evals/baselines/` are tracked.
+
+Aim for ≥3 snapshots from independent runs before deriving thresholds —
+the LLM judge introduces enough noise that a single run isn't a stable
+baseline.
 
 ## Adding a golden question
 
