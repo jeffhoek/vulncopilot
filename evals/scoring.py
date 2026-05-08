@@ -8,6 +8,7 @@ ANTHROPIC_API_KEY.
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -16,6 +17,8 @@ from ragas import evaluate
 from ragas.dataset_schema import EvaluationDataset, SingleTurnSample
 from ragas.llms import LangchainLLMWrapper
 from ragas.metrics import answer_correctness, context_recall, faithfulness
+
+from evals.thresholds import THRESHOLDS
 
 if TYPE_CHECKING:
     # Avoid transitively importing rag.agent (which constructs the
@@ -74,3 +77,23 @@ def score_all(
             name: (float(df[name].iloc[i]) if name in df.columns else float("nan")) for name in METRIC_NAMES
         }
     return out
+
+
+@dataclass
+class ThresholdFailure:
+    entry_id: str
+    metric: str
+    value: float
+    floor: float
+
+
+def check_thresholds(entry_id: str, scores: dict[str, float]) -> list[ThresholdFailure]:
+    """Return failures for one entry. NaN scores are skipped (judge noise)."""
+    failures: list[ThresholdFailure] = []
+    for metric, floor in THRESHOLDS.items():
+        value = scores.get(metric)
+        if value is None or math.isnan(value):
+            continue
+        if value < floor:
+            failures.append(ThresholdFailure(entry_id, metric, value, floor))
+    return failures
