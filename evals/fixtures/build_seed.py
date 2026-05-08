@@ -28,11 +28,24 @@ OUT = Path(__file__).parent / "eval_db_seed.jsonl"
 
 # Explicit CVEs the golden dataset references.
 SEED_CVE_IDS: list[str] = [
-    "CVE-2026-25253",
-    "CVE-2021-44228",  # Log4Shell
-    "CVE-2021-45046",  # Log4j follow-on
-    "CVE-2021-45105",  # Log4j follow-on
-    "CVE-2017-5645",  # Log4j 1.x
+    "CVE-2026-25253",  # OpenClaw — PR 1
+    "CVE-2021-44228",  # Log4Shell — PR 1
+    "CVE-2021-45046",  # Log4j follow-on — PR 1
+    "CVE-2021-45105",  # Log4j follow-on — PR 1
+    "CVE-2017-5645",  # Log4j 1.x — PR 1
+    "CVE-2017-11882",  # PR 2: Microsoft Office RCE; reference URLs question
+    # PR 2: Anthropic Claude Code / MCP vulns
+    "CVE-2026-39861",  # Claude Code sandbox symlink escape (10.0 CRITICAL)
+    "CVE-2026-25723",  # Claude Code piped-sed file-write bypass
+    "CVE-2025-34072",  # Anthropic Slack MCP data exfiltration
+    # PR 2: AI / LLM ecosystem
+    "CVE-2026-25592",  # Microsoft Semantic Kernel arbitrary file write
+    "CVE-2026-34070",  # LangChain prompt-loading path traversal
+    "CVE-2026-33873",  # Langflow agentic assistant RCE
+    # PR 2: VPN / remote-access vulns
+    "CVE-2018-13379",  # Fortinet FortiOS SSL VPN path traversal
+    "CVE-2025-0282",  # Ivanti Connect Secure stack buffer overflow
+    "CVE-2024-53704",  # SonicWall SSLVPN auth bypass
 ]
 SEED_CWES: list[str] = ["CWE-78"]
 LATEST_KEV_LIMIT = 50
