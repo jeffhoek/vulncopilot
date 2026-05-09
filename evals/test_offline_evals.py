@@ -1,8 +1,9 @@
 """Parametrized pytest entrypoint for offline RAG evals.
 
 PR 3 wires hard floors via `check_thresholds()`. NaN scores are skipped
-(judge noise, not regression). The per-entry summary print stays so
-`pytest -v` shows the score line even when a row fails.
+(judge noise, not regression). Per-entry scores live in
+`evals/results.json`; failure messages include the metric and value, so
+the suite stays quiet on success.
 """
 
 from __future__ import annotations
@@ -21,8 +22,6 @@ async def test_eval_entry(
     all_scores: dict[str, dict[str, float]],
 ) -> None:
     scores = all_scores.get(entry.id, {})
-    summary = ", ".join(f"{name}={scores.get(name, float('nan')):.3f}" for name in METRIC_NAMES)
-    print(f"\n{entry.id}: {summary}")
 
     for name in METRIC_NAMES:
         value = scores.get(name)
