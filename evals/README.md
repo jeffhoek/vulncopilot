@@ -50,8 +50,11 @@ podman run -d --name evals-pg -e POSTGRES_PASSWORD=postgres \
 ### 3. Run the suite. The fixture seeds the DB on first use.
 ```bash
 EVAL_DATABASE_URL="postgresql://postgres:postgres@localhost:55433/postgres" \
-  uv run pytest evals/ -v
+  uv run pytest evals/ --tb=short
 ```
+
+Per-entry scores are in `results.json` (step 4) — no need for `-v` to
+see them live.
 
 ### 4. Inspect results.
 ```bash
