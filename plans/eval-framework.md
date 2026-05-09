@@ -491,3 +491,76 @@ contort it.
   fix lives here
 
 No CI workflow yet (PR 3), no thresholds yet (PR 4).
+
+---
+
+## PR 3 complete — addendum and follow-ups
+
+PR 3 shipped on branch `evals-pr3`. Strawman floors (`faithfulness 0.80`,
+`context_recall 0.70`, `answer_correctness 0.60`) landed first as
+scaffolding; three local baselines were captured and committed under
+`evals/baselines/`; `evals/derive_thresholds.py` then computed
+`mean − 1σ` per metric and overwrote `evals/thresholds.py` with the
+derived values.
+
+### Derived floors (from 3 baselines)
+
+| metric | floor |
+|---|---:|
+| faithfulness | 0.6150 |
+| context_recall | 0.4800 |
+| answer_correctness | 0.4940 |
+
+Re-run `uv run python -m evals.derive_thresholds` for the audit table
+with mean/σ alongside.
+
+### Known stable failures (carry forward)
+
+Two entries fail the derived floors reproducibly across runs. Both are
+**real signal**, not judge noise — kept out of PR 3's scope on purpose
+(PR 3's job is to wire the regression detector, not fix what it finds).
+
+1. **`cwe_78` faithfulness ≈ 0.45–0.55 (floor 0.615).** Pre-registered
+   in the PR-1 addendum's "Open product questions" section under
+   *embellishment vs. helpfulness*: the agent answer adds an
+   unsolicited `; rm -rf /` example and a `cwe.mitre.org` URL not
+   grounded in the SQL result. Decision still open: tighten the system
+   prompt to discourage embellishment, or accept the lower score as the
+   cost of helpful elaboration. If accepting, document and add an
+   entry-level allowlist to `check_thresholds()`; if tightening, edit
+   the system prompt in `config.py` and re-derive baselines.
+2. **`network_device_vulns` context_recall = 0.375 deterministic (floor
+   0.480).** New finding in PR 3. Score is identical across runs, so
+   it's a retrieval gap, not judge variance — the tool calls aren't
+   surfacing the data the ground truth references. Diagnose with
+   `jq '.network_device_vulns | {tools_used, context_count, answer}'
+   evals/results.json` against the entry's `ground_truth` in
+   `dataset.yaml`. Likely culprits: missing vendor in the SQL filter
+   (Cisco/Juniper/Fortinet), semantic search returning unrelated
+   chunks, or a CVE in the ground truth that isn't in
+   `eval_db_seed.jsonl`.
+
+Both should land as separate fixes — neither requires re-deriving
+floors unless the ground truth itself is edited.
+
+### Floor tightness — observation for a future iteration
+
+`mean − 1σ` is, by construction, the floor that ~16% of a normal
+distribution sits below — at 15 entries × 3 metrics = 45 measurements
+per run, that's ~7 expected dips per run. Observed: 4–6 failures per
+run, with most non-reproducible. The floors behave exactly as the math
+predicts but make the suite a noise band more than a regression
+detector at `1σ`. A future iteration could:
+- Tighten to `mean − 2σ` (~2.5% expected, ~1 dip per run, much higher
+  signal-to-noise) — one-line change in `derive_thresholds.py`.
+- Or layer a per-entry override map for known-noisy entries.
+
+Out of scope for PR 3 — flagged here so it's not lost.
+
+### `answer_correctness` is not the noisiest metric
+
+The README claimed `answer_correctness` was the noisiest, based on PR-1
+data. Three baseline runs say otherwise: across 4–6 failures per run,
+none were `answer_correctness`. `faithfulness` and `context_recall`
+showed comparable run-to-run variance. README's "Known footguns"
+section could be updated to reflect this — minor doc fix, not blocking.
