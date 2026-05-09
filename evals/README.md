@@ -214,7 +214,8 @@ is the first thing to look at when a row scores poorly.
 - The seed file is the source of truth. `eval_db_seed.jsonl` includes
   1536-dim embeddings, so it's a few MB — that's expected.
 - The judge LLM (`EVAL_JUDGE_MODEL`, default `claude-haiku-4-5`)
-  occasionally produces noisy scores. `answer_correctness` tends to be
-  the noisiest of the three because it combines factual and semantic
-  similarity into a single number; if a single row's score fluctuates
-  run-to-run, the judge is the likely culprit before the agent.
+  occasionally produces noisy scores. `faithfulness` and
+  `context_recall` show comparable run-to-run variance; the judge can
+  also time out and emit `null` scores (skipped by the assertion
+  logic). If a single row's score fluctuates run-to-run, the judge is
+  the likely culprit before the agent.

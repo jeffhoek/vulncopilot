@@ -80,7 +80,11 @@ class Settings(BaseSettings):
         "Answer concisely. If the answer is not in the data, say so. "
         "When the user asks a follow-up question, use the conversation history "
         "to resolve references (e.g., 'it', 'that CVE', 'the one you just described') "
-        "before querying the database."
+        "before querying the database.\n\n"
+        "When answering definition or reference questions (CWE entries, CVE "
+        "descriptions, vendor info), report only what the tool returned. Do "
+        "not add example payloads, external URLs, or related concepts that "
+        "were not in the tool output."
     )
 
     # MCP Server
