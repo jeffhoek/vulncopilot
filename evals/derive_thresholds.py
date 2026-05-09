@@ -73,7 +73,7 @@ def _render_thresholds_file(floors: dict[str, float]) -> str:
         "THRESHOLDS: dict[str, float] = {",
     ]
     for metric in METRIC_NAMES:
-        lines.append(f"    {metric!r}: {floors[metric]:.4f},")
+        lines.append(f'    "{metric}": {floors[metric]:.4f},')
     lines.append("}")
     lines.append("")
     return "\n".join(lines)
