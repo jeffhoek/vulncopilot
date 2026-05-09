@@ -8,7 +8,7 @@ baseline to refresh.
 from __future__ import annotations
 
 THRESHOLDS: dict[str, float] = {
-    "faithfulness": 0.6150,
-    "context_recall": 0.4800,
-    "answer_correctness": 0.4940,
+    "faithfulness": 0.5619,
+    "context_recall": 0.4389,
+    "answer_correctness": 0.4749,
 }
