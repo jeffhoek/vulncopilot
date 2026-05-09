@@ -35,24 +35,31 @@ deferred".
 
 ## Running locally
 
-```bash
-# 1. Make sure ANTHROPIC_API_KEY and OPENAI_API_KEY are exported.
-#    Easiest: `set -a; source .env; set +a` (or use direnv).
 
-# 2. Spin up a clean Postgres+pgvector. Any port works; just match EVAL_DATABASE_URL.
+### 1. Make sure ANTHROPIC_API_KEY and OPENAI_API_KEY are exported.
+```bash
+set -a; source .env; set +a
+```
+
+### 2. Spin up a clean Postgres+pgvector. Any port works; just match EVAL_DATABASE_URL.
+```bash
 podman run -d --name evals-pg -e POSTGRES_PASSWORD=postgres \
   -p 55433:5432 docker.io/pgvector/pgvector:pg16
+```
 
-# 3. Run the suite. The fixture seeds the DB on first use.
+### 3. Run the suite. The fixture seeds the DB on first use.
+```bash
 EVAL_DATABASE_URL="postgresql://postgres:postgres@localhost:55433/postgres" \
   uv run pytest evals/ -v
-
-# 4. Inspect results.
-cat evals/results.json | jq
-
-# 5. (Optional) Snapshot this run as a baseline for PR 3 thresholds.
-#    See "Baselines" below.
 ```
+
+### 4. Inspect results.
+```bash
+cat evals/results.json | jq
+```
+
+### 5. (Optional) Snapshot this run as a baseline for PR 3 thresholds.
+#    See "Baselines" below.
 
 If `EVAL_DATABASE_URL` is unset, the suite skips cleanly — useful as a guardrail
 so a default `pytest` from repo root never accidentally hits a real DB.
