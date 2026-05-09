@@ -201,7 +201,7 @@ def _write_results(
         }
         for entry, result in rows
     }
-    RESULTS_PATH.write_text(json.dumps(payload, indent=2, default=str))
+    RESULTS_PATH.write_text(json.dumps(payload, indent=2, default=str) + "\n")
 
 
 @pytest.fixture(scope="session")

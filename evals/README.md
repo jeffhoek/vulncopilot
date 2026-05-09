@@ -11,10 +11,10 @@ scored on three Ragas metrics: `faithfulness`, `context_recall`, and
 
 | | PR 1 | PR 2 | PR 3 |
 |---|---|---|---|
-| Dataset entries | 5 | **15 ✓** | 15 |
-| Metrics | faithfulness | **+ context_recall, answer_correctness ✓** | same |
-| Baselines | — | — | ≥3 `run-*.json` snapshots committed |
-| Thresholds | advisory | **advisory ✓** | hard floors (`mean − 1σ`) |
+| Dataset entries | 5 | **15 ✓** | 15 ✓ |
+| Metrics | faithfulness | **+ context_recall, answer_correctness ✓** | same ✓ |
+| Baselines | — | — | **≥3 `run-*.json` snapshots committed ✓** |
+| Thresholds | advisory | **advisory ✓** | **hard floors (`mean − 1σ`) ✓** |
 
 The GitHub Actions workflow originally scoped as PR 3 is **deferred** —
 revisited once the feature is merged to main. See
@@ -35,24 +35,34 @@ deferred".
 
 ## Running locally
 
-```bash
-# 1. Make sure ANTHROPIC_API_KEY and OPENAI_API_KEY are exported.
-#    Easiest: `set -a; source .env; set +a` (or use direnv).
 
-# 2. Spin up a clean Postgres+pgvector. Any port works; just match EVAL_DATABASE_URL.
+### 1. Make sure ANTHROPIC_API_KEY and OPENAI_API_KEY are exported.
+```bash
+set -a; source .env; set +a
+```
+
+### 2. Spin up a clean Postgres+pgvector. Any port works; just match EVAL_DATABASE_URL.
+```bash
 podman run -d --name evals-pg -e POSTGRES_PASSWORD=postgres \
   -p 55433:5432 docker.io/pgvector/pgvector:pg16
-
-# 3. Run the suite. The fixture seeds the DB on first use.
-EVAL_DATABASE_URL="postgresql://postgres:postgres@localhost:55433/postgres" \
-  uv run pytest evals/ -v
-
-# 4. Inspect results.
-cat evals/results.json | jq
-
-# 5. (Optional) Snapshot this run as a baseline for PR 3 thresholds.
-#    See "Baselines" below.
 ```
+
+### 3. Run the suite. The fixture seeds the DB on first use.
+```bash
+EVAL_DATABASE_URL="postgresql://postgres:postgres@localhost:55433/postgres" \
+  uv run pytest evals/ --tb=short
+```
+
+Per-entry scores are in `results.json` (step 4) — no need for `-v` to
+see them live.
+
+### 4. Inspect results.
+```bash
+cat evals/results.json | jq
+```
+
+### 5. (Optional) Snapshot this run as a baseline for PR 3 thresholds.
+#    See "Baselines" below.
 
 If `EVAL_DATABASE_URL` is unset, the suite skips cleanly — useful as a guardrail
 so a default `pytest` from repo root never accidentally hits a real DB.
@@ -80,6 +90,24 @@ git add evals/baselines/
 Aim for ≥3 snapshots from independent runs before deriving thresholds —
 the LLM judge introduces enough noise that a single run isn't a stable
 baseline.
+
+### Deriving thresholds
+
+Per-metric hard floors live in [`thresholds.py`](thresholds.py) and are
+derived from the committed baselines:
+
+```bash
+uv run python -m evals.derive_thresholds
+```
+
+The script pools every per-entry score across all `evals/baselines/run-*.json`
+files (skipping NaN — judge noise, not signal), computes `mean − 1σ` per
+metric using population stdev, prints an audit table, and overwrites
+[`thresholds.py`](thresholds.py).
+
+Re-run it after committing a new baseline. It refuses to run with fewer
+than 3 baseline files or fewer than 5 non-NaN observations for any
+metric; both guards are encoded so degenerate floors can't slip in.
 
 ## Adding a golden question
 
@@ -159,6 +187,17 @@ date wrong.
 - **Low (<0.4):** material disagreement with the hand-authored ground
   truth. Read both side by side before assuming the agent is wrong — the
   ground truth itself can be stale once the seed is regenerated.
+
+### Threshold failures
+
+A failing assertion (`<metric>=<value> below floor <floor>`) does **not**
+abort the run before scoring — `results.json` is still written by the
+session-scoped fixture, so you can inspect every score even when one row
+trips a floor. NaN scores are skipped, not failed: the judge occasionally
+emits NaN for `answer_correctness` and treating that as a regression
+would make the suite flaky run-to-run. Before assuming a real
+regression, re-run once to rule out judge noise — it's the most common
+cause of a single row dipping below the floor.
 
 ### Tool path
 
