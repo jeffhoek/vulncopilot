@@ -57,22 +57,71 @@ and retrieval optimization.
 
 ## Medium Priority — In-Flight or High-Value
 
-### Reference URL Content Scraping *(PR #45 open — in progress)*
+### OWASP Top 10 (2025) Integration
 
-NVD stores up to ten `reference_urls` per CVE pointing to vendor advisories,
-patch notes, proof-of-concept write-ups, and security blog posts. Scrape those
-pages and store the extracted text in a dedicated `cve_references` table
-(columns: `url`, `cve_id`, `title`, `scraped_text`, `embedding`). Index the
-embeddings with pgvector so RAG retrieval can surface relevant reference
-snippets alongside core CVE data. Considerations:
+Ingest the OWASP Top 10:2025 web app risk categories as a curated taxonomy
+layer that bridges existing CWE data to practitioner-facing remediation
+guidance. The load-bearing piece is the **CWE-to-category mapping table**:
+it lets the agent answer category-framed counting and aggregation
+questions via SQL JOINs through the existing `cwes TEXT[]` columns on KEV
+and NVD. The category prose (description, "How to Prevent," example
+scenarios) is a secondary asset, embedded for semantic retrieval on
+prose-heavy questions.
 
-- Filter low-value URLs at ingest time (dead links, paywalled pages, NVD
-  self-referential links, social media)
-- Summarize long pages with an LLM call before embedding to keep chunk quality
-  high
-- Respect `robots.txt` and rate-limit scraping to avoid being blocked by vendor
-  sites
-- Re-scrape on a schedule so content stays current as advisories are updated
+**Two execution paths**
+
+1. **SQL via mapping table** — for "how many," "which," "list," "group by"
+   questions. The agent uses `OWASP category → CWE → CVE (NVD) → KEV`
+   JOINs. No retrieval needed; the OWASP IDs are taught in the system
+   prompt as a fixed enumeration of 10.
+2. **Retrieval over OWASP prose** — for "what is X," "how do we prevent
+   Y," or fuzzy framings ("session hijacking" → A07). Embeddings on the
+   description + prevention + examples earn their keep here.
+
+Most useful answers blend both: SQL produces the linkage and counts,
+retrieval (or a direct SELECT once the category id is known) supplies the
+remediation prose.
+
+**Key points**
+
+- **Schema**: `owasp_top10_categories` (id, name, description, prevention,
+  examples, url, list_type, embedding) + `owasp_cwe_mapping` (owasp_id,
+  cwe_id). The mapping table is the integration's center of gravity; the
+  embedding column is additive for prose retrieval.
+- **Sourcing**: pull from https://owasp.org/Top10/2025/ — 10 stable,
+  well-structured pages, each with a "List of Mapped CWEs" section.
+  Either (a) hand-curate a JSON in `data/` (simplest given 10 rows that
+  change every ~3 years) or (b) parse the canonical markdown from the
+  [OWASP/Top10 GitHub repo](https://github.com/OWASP/Top10) (structured,
+  version-controlled, easy to re-run on new releases). Unlike the
+  deprioritized reference-URL effort, this is 10 known cooperative pages.
+- **Tool surface**: extend `retrieve()` to include OWASP rows alongside
+  KEV/NVD. Update the system prompt to list the 10 category IDs and
+  include example JOIN patterns through `owasp_cwe_mapping`.
+- **Mapping precision**: start with OWASP's official CWE mappings (~248
+  CWEs total). Resist transitively expanding via CWE parent/child
+  relationships in v1 — adds recall but editorializes past OWASP's
+  framing.
+- **Future extension**: same schema accommodates the OWASP Top 10 for LLM
+  Applications (2025) via the `list_type` column. Worth adding once the
+  web list pattern is proven; the LLM list is standalone (no meaningful
+  CVE bridge) but is self-applicable to this RAG app and timely.
+
+**Example queries this unlocks** (path = SQL / retrieval / both)
+
+- *(SQL)* "How many actively exploited (KEV) CVEs fall under Broken Access
+  Control?"
+- *(SQL)* "Which OWASP 2025 category has the most KEV entries in the last
+  90 days?"
+- *(both)* "For CVE-2024-XXXX, what does OWASP recommend for prevention?"
+  — SQL traces CVE → CWE → category; SELECT/retrieval pulls the prose.
+- *(both)* "Summarize KEV trends grouped by OWASP category."
+- *(retrieval + SQL)* "What is Software Supply Chain Failures and which
+  recent CVEs are examples?"
+
+This is the curated alternative to the broad reference URL scraping effort
+below — same goal (surface remediation context next to CVE data) at a
+fraction of the operational cost.
 
 ### STIG / IAVA Compliance Data *(plan: PR #48)*
 
@@ -127,6 +176,31 @@ meaningfully in multi-user deployments, and complements Cost Tracking by
 lowering the baseline spend.
 
 ## Nice-to-Have — Cool Features
+
+### Reference URL Content Scraping *(deprioritized; PR #45 stalled)*
+
+NVD stores up to ten `reference_urls` per CVE pointing to vendor advisories,
+patch notes, proof-of-concept write-ups, and security blog posts. The original
+intent was to scrape those pages into a dedicated `cve_references` table with
+embeddings so RAG retrieval could surface remediation snippets alongside core
+CVE data.
+
+Deprioritized because scraping thousands of unknown pages turned out to be a
+high-cost, low-signal effort — redirects, paywalls, dead links, robots.txt
+constraints, and inconsistent content quality made the value uncertain. The
+OWASP Top 10 (2025) integration above covers the core remediation-guidance
+need at a tiny fraction of the operational complexity. Revisit only if a
+specific question class proves OWASP + STIG/IAVA isn't enough.
+
+If revisited, considerations:
+
+- Filter low-value URLs at ingest time (dead links, paywalled pages, NVD
+  self-referential links, social media)
+- Summarize long pages with an LLM call before embedding to keep chunk quality
+  high
+- Respect `robots.txt` and rate-limit scraping to avoid being blocked by vendor
+  sites
+- Re-scrape on a schedule so content stays current as advisories are updated
 
 ### Multi-Agent Architecture
 
