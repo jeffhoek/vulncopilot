@@ -6,6 +6,53 @@ There is a spectrum of tools that overlap with pieces of what this project does,
 
 ## Competitive Landscape
 
+### Open-Source MCP Servers for CVE Data
+
+The closest neighbors on GitHub are pure MCP servers that fan out HTTPS calls
+to many APIs and let the LLM correlate — no persistent store, no UI.
+
+- **[mukul975/cve-mcp-server](https://github.com/mukul975/cve-mcp-server)** —
+  27 tools across 21 APIs (NVD, EPSS, KEV, OSV, GHSA, MITRE ATT&CK, Shodan,
+  GreyNoise, VirusTotal, AbuseIPDB, MalwareBazaar, ThreatFox, URLScan, OTX,
+  Ransomwhere, CIRCL PDNS). Composite risk score over CVSS + EPSS + KEV +
+  exploit-evidence with explanation. SQLite cache + audit log. Active.
+- **[badchars/cve-mcp](https://github.com/badchars/cve-mcp)** — 23 tools over
+  NVD, EPSS, KEV, GHSA, OSV. Same fan-out shape.
+- **[jgamblin/CVE-MCP](https://github.com/jgamblin/CVE-MCP)** and
+  **[rinadelph/CVE-MCP](https://github.com/rinadelph/CVE-MCP)** — narrower
+  CVE-only MCP servers.
+
+What they do well: data-source breadth, composite scoring with explanation,
+SSRF guards on lookup tools. What they lack: persistent vector store (every
+query re-fetches from APIs and pays rate limits), conversational UI, hybrid
+SQL+RAG querying, deploy story beyond `pip install`.
+
+### Threat-Intel Dashboards
+
+These poll feeds and present aggregated views — SQL-shaped, no agent.
+
+- **[infinri/A.S.E](https://github.com/infinri/A.S.E)** — polls KEV, NVD,
+  GHSA, OSV, Packagist; filters against `composer.lock`; Slack-alerts only
+  P0/P1. The inventory-matching + alert-fatigue framing is correct.
+- **[jly-engineer/threat_intelligence_app](https://github.com/jly-engineer/threat_intelligence_app)** —
+  MSP-flavored: monitored-software inventory + KEV/NVD/EPSS matching + daily
+  PDF digest.
+- **[moke-cloud/threat-radar](https://github.com/moke-cloud/threat-radar)**,
+  **[fir3storm/sec-ticker](https://github.com/fir3storm/sec-ticker)** —
+  dashboard variants over KEV/NVD/RSS feeds.
+
+What they do well: software inventory matching, daily digest generation,
+alert-quality discipline (only ship P0/P1). What they lack: any conversational
+or semantic-search layer; no CWE join; no MCP exposure.
+
+### Agentic Triage
+
+- **[dguilliams3/mcp-agentic-security-escalation](https://github.com/dguilliams3/mcp-agentic-security-escalation)** —
+  closest in architecture: LangChain ReAct agent + FAISS over KEV/NVD +
+  SQLite for incident risk assessments + tool isolation in a separate MCP
+  server. Different problem (incident correlation, not interactive Q&A) but
+  validates the agent-with-isolated-tools shape.
+
 ### Commercial Vulnerability Platforms
 
 **Tenable, Rapid7, Qualys, Snyk**
@@ -75,13 +122,32 @@ This is the capability that turns the project from a database lookup tool into s
 
 ## Roadmap
 
-Beyond OAuth and reference scraping, planned enhancements include:
+Beyond OAuth, the high-priority items informed by the comparables above are:
 
-- **EPSS scores** — integrate Exploit Prediction Scoring System likelihood-of-exploitation signals alongside CVSS for better triage prioritization
-- **Hybrid BM25 + vector search** — combine pgvector similarity with PostgreSQL `tsvector` full-text search for improved keyword matching on CVE IDs and vendor names
-- **Multi-agent architecture** — specialized agents for triage, reporting, and trend analysis orchestrated by a router that delegates based on query intent
-- **SBOM / CPE matching** — cross-reference a software bill of materials against KEV to identify exposure in a specific environment
-- **Charting tool** — generate vulnerability trend graphs and severity breakdowns directly in the chat interface
-- **Alerting** — subscribe to notifications when new KEV entries match specific vendor, product, or severity criteria
+- **EPSS scores** *(now high priority)* — load FIRST.org's daily exploit
+  prediction feed into Postgres alongside KEV and NVD. Fills the gap between
+  CVSS impact and KEV confirmation with a near-term exploitation likelihood.
+  Prerequisite for the composite risk score and EPSS-weighted retrieval.
+- **Composite risk score tool** — a third agent tool returning a single
+  explainable 0–100 score blending CVSS, EPSS, KEV status, ransomware use,
+  and CWE class. Also exposed as a SQL view so the existing `query` tool can
+  `ORDER BY risk_score DESC`. Every MCP-server competitor computes this with
+  live API fan-out per CVE; pre-joining in Postgres ranks the whole dataset
+  in milliseconds.
+- **Software inventory matching** — let users paste a `composer.lock`,
+  `package-lock.json`, `requirements.txt`, or SBOM and join it against
+  KEV/NVD on CPE/PURL. Turns the project from "ask about CVEs" into "tell me
+  what's wrong with my stack." Pairs with the risk score (rank what to patch
+  first) and alerting (notify only on inventory matches).
+- **Reference URL scraping** — see the Differentiators section above for the
+  full motivation; covered in detail in `future-enhancements.md`.
+- **Hybrid BM25 + vector search** — combine pgvector similarity with
+  PostgreSQL `tsvector` full-text search for keyword matching on CVE IDs and
+  vendor names.
+- **Charting tool** — generate vulnerability trend graphs and severity
+  breakdowns directly in the chat interface.
+- **Alerting** — subscribe to notifications when new KEV entries match
+  specific vendor, product, or severity criteria — filtered through user
+  inventory once that lands.
 
 See [future-enhancements.md](future-enhancements.md) for the full list.

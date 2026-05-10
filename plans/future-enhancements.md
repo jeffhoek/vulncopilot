@@ -15,6 +15,81 @@ Implement permission levels such as read-only analyst, power user, and admin
 (who can trigger data loads or manage configuration), backed by OAuth so access
 is tied to real identities rather than shared credentials.
 
+### EPSS Score Ingestion
+
+Load the [Exploit Prediction Scoring System](https://www.first.org/epss/) daily
+feed from FIRST.org into a new `epss_scores` table keyed by CVE ID. EPSS gives
+each CVE a probability (0.0–1.0) that it will be exploited in the wild within
+the next 30 days, plus a percentile rank against all scored CVEs. It fills the
+gap between CVSS ("how bad if exploited") and KEV ("confirmed exploited now"):
+a CVSS 9.8 with EPSS 0.001 is likely noise, while a CVSS 6.5 with EPSS 0.95
+deserves attention this week.
+
+- **Source**: `https://epss.cyentia.com/epss_scores-current.csv.gz`, ~250K
+  rows, refreshed daily. Same loader shape as the KEV pipeline.
+- **Schema**: `epss_scores(cve_id PK, probability REAL, percentile REAL,
+  scored_at DATE)`. Optional `epss_scores_history` for trend queries.
+- **Tool surface**: extend the `query` tool's schema awareness so the agent
+  can `ORDER BY epss.probability DESC` and filter on percentile. Surface EPSS
+  in `retrieve` result cards alongside CVSS and KEV status.
+- **Unlocks**: "Show me high-EPSS CVEs that aren't on KEV yet" (the leading
+  indicator query), "rank our open vulnerabilities by likelihood of
+  exploitation," and the Composite Risk Score below.
+- **Prerequisite for**: Composite Risk Score, EPSS-weighted retrieval scoring
+  (see Medium Priority below).
+
+### Composite Risk Score Tool
+
+A third agent tool, `risk_score(cve_id)`, that returns a single 0–100 number
+plus a structured breakdown of contributing factors. Internally a SQL query
+joining `nvd_cves`, `kev_catalog`, `epss_scores`, and `cwe_definitions`, plus a
+pure Python function that blends:
+
+- CVSS base score (normalized 0–1), weight ~0.30
+- EPSS probability, weight ~0.30
+- KEV listed → flat +0.25 bonus
+- KEV ransomware-use → flat +0.10 bonus
+- CWE class severity (memory corruption / injection > info-disclosure / DoS),
+  small static mapping, weight ~0.05
+
+Returned shape: `{cve_id, score, band, components: {...}, rationale}` so the
+agent can both rank and explain. Also exposed as a SQL view (`v_cve_risk`) so
+the existing `query` tool can `ORDER BY risk_score DESC` for bulk questions.
+
+This is the natural high-leverage payoff once EPSS is loaded: every API-only
+competitor computes this with live fan-out per CVE; with everything pre-joined
+in Postgres, the whole dataset ranks in milliseconds.
+
+Tuning: ship with fixed weights, log components via Langfuse, revisit once
+real usage data shows which CVEs analysts actually act on.
+
+**Depends on**: EPSS Score Ingestion above.
+
+### Software Inventory Matching
+
+Let users paste or upload a dependency manifest (`composer.lock`,
+`package-lock.json`, `requirements.txt`, `Gemfile.lock`, SPDX/CycloneDX SBOM,
+or a plain CPE list) and persist the parsed package + version list per user.
+On each refresh, join the inventory against KEV and NVD on CPE/PURL to
+produce a personalized "what's wrong with my stack" view. Pair with the
+Composite Risk Score to rank only the CVEs that actually apply.
+
+- **Schema**: `user_inventories(id, user_id, name, source_format, parsed_at)`
+  + `inventory_items(inventory_id, ecosystem, package, version, cpe, purl)`.
+- **Matching**: NVD configurations already contain CPE match strings; for
+  package ecosystems, supplement with OSV or GHSA (see Additional Data
+  Sources). Start with exact version matching; add range matching second.
+- **Tool surface**: a `match_inventory(inventory_id)` tool that returns the
+  joined CVE list, optionally filtered by KEV / EPSS threshold / risk band.
+- **Unlocks**: "Of the 4,200 CVEs added this quarter, which 12 affect my
+  stack and are on KEV?" — the question this project can't answer today
+  without external tooling.
+
+This is the feature that turns the project from "ask about CVEs in general"
+into "tell me what's wrong with *my* environment," and pairs naturally with
+Alerting (filter notifications to inventory matches only) and the Composite
+Risk Score (rank what's worth patching first).
+
 ### Alerting & Notifications
 
 Subscribe to alerts when new KEV entries match specific criteria such as vendor,
@@ -152,7 +227,7 @@ query phrasing:
 
 - **KEV status** — known-exploited CVEs rank above non-KEV results at equal
   similarity
-- **EPSS score** — once ingested (see Additional Data Sources), use exploitation
+- **EPSS score** — once ingested (see High Priority), use exploitation
   likelihood as a retrieval weight
 - **Recency** — `date_added` to KEV or NVD publish date as a decay factor
 - **User feedback** — upvoted CVEs gain a small boost (ties into User Feedback
@@ -230,17 +305,12 @@ API — build the API first and Slack/Teams become thin wrappers around it.
 Display source CVE IDs inline as the agent responds, linked directly to NVD and
 KEV detail pages for verification.
 
-### Software Inventory Matching
-
-Allow users to upload a Software Bill of Materials (SBOM) or CPE list and
-cross-reference it against known exploited vulnerabilities to identify exposure.
-
 ### Additional Data Sources
 
 Ingest supplementary vulnerability intelligence such as:
 
-- **EPSS scores** — Exploit Prediction Scoring System for likelihood of
-  exploitation
-- **GitHub Security Advisories** — coverage for open-source dependencies
+- **OSV / GitHub Security Advisories** — package-ecosystem coverage that NVD
+  lags on; also unlocks PURL-based matching for Software Inventory Matching
+- **MITRE ATT&CK** — technique mapping as a second taxonomy axis alongside CWE
 - **Exploit-DB** — proof-of-concept exploit availability
 - **Vendor-specific advisories** — Microsoft, Cisco, Adobe, etc.
