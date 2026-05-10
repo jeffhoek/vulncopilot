@@ -61,45 +61,63 @@ and retrieval optimization.
 
 Ingest the OWASP Top 10:2025 web app risk categories as a curated taxonomy
 layer that bridges existing CWE data to practitioner-facing remediation
-guidance. Each of the 10 categories has rich prose (description, "How to
-Prevent," example scenarios) and an OWASP-published list of mapped CWEs,
-which lets the agent answer category-framed questions and surface mitigation
-content the current schema lacks.
+guidance. The load-bearing piece is the **CWE-to-category mapping table**:
+it lets the agent answer category-framed counting and aggregation
+questions via SQL JOINs through the existing `cwes TEXT[]` columns on KEV
+and NVD. The category prose (description, "How to Prevent," example
+scenarios) is a secondary asset, embedded for semantic retrieval on
+prose-heavy questions.
 
-Key points:
+**Two execution paths**
+
+1. **SQL via mapping table** — for "how many," "which," "list," "group by"
+   questions. The agent uses `OWASP category → CWE → CVE (NVD) → KEV`
+   JOINs. No retrieval needed; the OWASP IDs are taught in the system
+   prompt as a fixed enumeration of 10.
+2. **Retrieval over OWASP prose** — for "what is X," "how do we prevent
+   Y," or fuzzy framings ("session hijacking" → A07). Embeddings on the
+   description + prevention + examples earn their keep here.
+
+Most useful answers blend both: SQL produces the linkage and counts,
+retrieval (or a direct SELECT once the category id is known) supplies the
+remediation prose.
+
+**Key points**
 
 - **Schema**: `owasp_top10_categories` (id, name, description, prevention,
   examples, url, list_type, embedding) + `owasp_cwe_mapping` (owasp_id,
-  cwe_id). Mirrors KEV/NVD shape (embedded content) more than CWE
-  (JOIN-only) because the prose is high-value for retrieval.
+  cwe_id). The mapping table is the integration's center of gravity; the
+  embedding column is additive for prose retrieval.
 - **Sourcing**: pull from https://owasp.org/Top10/2025/ — 10 stable,
   well-structured pages, each with a "List of Mapped CWEs" section.
   Either (a) hand-curate a JSON in `data/` (simplest given 10 rows that
-  change every ~3 years) or (b) parse the canonical markdown sources from
-  the [OWASP/Top10 GitHub repo](https://github.com/OWASP/Top10) (structured,
-  version-controlled, easy to re-run on new releases). Both are realistic;
-  unlike the deprioritized reference-URL effort, this is 10 known cooperative
-  pages, not thousands of unknown ones.
-- **Bridge query path**: `OWASP category → CWE → CVE (NVD) → KEV (exploited?)`
-  via JOINs on existing `cwes TEXT[]` columns.
-- **Tool surface**: extend `retrieve()` to include OWASP rows alongside KEV/NVD
-  so semantic queries naturally pull in prevention guidance. Update system
-  prompt with example JOIN patterns.
-- **Mapping precision**: start with OWASP's official CWE mappings (~248 CWEs
-  total). Resist transitively expanding via CWE parent/child relationships in
-  v1 — adds recall but editorializes past OWASP's framing.
+  change every ~3 years) or (b) parse the canonical markdown from the
+  [OWASP/Top10 GitHub repo](https://github.com/OWASP/Top10) (structured,
+  version-controlled, easy to re-run on new releases). Unlike the
+  deprioritized reference-URL effort, this is 10 known cooperative pages.
+- **Tool surface**: extend `retrieve()` to include OWASP rows alongside
+  KEV/NVD. Update the system prompt to list the 10 category IDs and
+  include example JOIN patterns through `owasp_cwe_mapping`.
+- **Mapping precision**: start with OWASP's official CWE mappings (~248
+  CWEs total). Resist transitively expanding via CWE parent/child
+  relationships in v1 — adds recall but editorializes past OWASP's
+  framing.
 - **Future extension**: same schema accommodates the OWASP Top 10 for LLM
-  Applications (2025) via a `list_type` column. Worth adding once the web
-  list pattern is proven; the LLM list is standalone (no meaningful CVE
-  bridge) but is self-applicable to this RAG app and timely.
+  Applications (2025) via the `list_type` column. Worth adding once the
+  web list pattern is proven; the LLM list is standalone (no meaningful
+  CVE bridge) but is self-applicable to this RAG app and timely.
 
-Example queries this unlocks:
+**Example queries this unlocks** (path = SQL / retrieval / both)
 
-- "How many actively exploited (KEV) CVEs fall under Broken Access Control?"
-- "Which OWASP 2025 category has the most KEV entries in the last 90 days?"
-- "For CVE-2024-XXXX, what does OWASP recommend for prevention?"
-- "Summarize KEV trends grouped by OWASP category."
-- "What is Software Supply Chain Failures and which recent CVEs are examples?"
+- *(SQL)* "How many actively exploited (KEV) CVEs fall under Broken Access
+  Control?"
+- *(SQL)* "Which OWASP 2025 category has the most KEV entries in the last
+  90 days?"
+- *(both)* "For CVE-2024-XXXX, what does OWASP recommend for prevention?"
+  — SQL traces CVE → CWE → category; SELECT/retrieval pulls the prose.
+- *(both)* "Summarize KEV trends grouped by OWASP category."
+- *(retrieval + SQL)* "What is Software Supply Chain Failures and which
+  recent CVEs are examples?"
 
 This is the curated alternative to the broad reference URL scraping effort
 below — same goal (surface remediation context next to CVE data) at a
