@@ -39,7 +39,7 @@ For a broader comparison against commercial platforms, academic projects, and ot
 
 ## Features
 
-- CISA KEV + NVD datasets (~1,500 KEV entries, enriched with CVSS scores from NVD) + MITRE CWE weakness taxonomy
+- CISA KEV + NVD datasets (~1,500 KEV entries, enriched with CVSS scores from NVD) + MITRE CWE weakness taxonomy — see [docs/cwe-integration.md](docs/cwe-integration.md)
 - PostgreSQL/pgvector for vector storage and cosine similarity search (HNSW index)
 - OpenAI embeddings (text-embedding-3-small)
 - Two agent tools: `retrieve` (semantic search) and `query` (direct SQL)
@@ -218,8 +218,9 @@ Any [Pydantic AI supported model](https://ai.pydantic.dev/models/) can be used:
 
 | Model | Description |
 |-------|-------------|
-| `anthropic:claude-haiku-4-5-20251001` | Fast, concise responses (recommended) |
-| `anthropic:claude-sonnet-4-20250514` | More capable, slower |
+| `anthropic:claude-haiku-4-5-20251001` | Fast, concise responses (recommended default) |
+| `anthropic:claude-sonnet-4-6` | More capable, slower |
+| `anthropic:claude-opus-4-7` | Most capable, highest latency and cost |
 
 ## Docker
 
