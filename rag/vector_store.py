@@ -9,16 +9,22 @@ class PgVectorStore:
         self.pool = pool
 
     async def search(self, query_embedding: list[float], top_k: int = 5) -> list[str]:
-        """Find top-k most similar documents across KEV and NVD tables."""
+        """Find top-k most similar documents across KEV, NVD, and reference tables."""
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
                 """
                 SELECT content FROM (
                     SELECT content, embedding <=> $1 AS distance
                     FROM kev_vulnerabilities
+                    WHERE embedding IS NOT NULL
                     UNION ALL
                     SELECT content, embedding <=> $1 AS distance
                     FROM nvd_vulnerabilities
+                    WHERE embedding IS NOT NULL
+                    UNION ALL
+                    SELECT content, embedding <=> $1 AS distance
+                    FROM cve_references
+                    WHERE embedding IS NOT NULL
                 ) combined
                 ORDER BY distance
                 LIMIT $2
@@ -32,7 +38,8 @@ class PgVectorStore:
         async with self.pool.acquire() as conn:
             return await conn.fetchval(
                 """
-                SELECT (SELECT count(*) FROM kev_vulnerabilities)
-                     + (SELECT count(*) FROM nvd_vulnerabilities)
+                SELECT (SELECT count(*) FROM kev_vulnerabilities WHERE embedding IS NOT NULL)
+                     + (SELECT count(*) FROM nvd_vulnerabilities WHERE embedding IS NOT NULL)
+                     + (SELECT count(*) FROM cve_references WHERE embedding IS NOT NULL)
                 """
             )
