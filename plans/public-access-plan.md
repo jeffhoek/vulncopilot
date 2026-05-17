@@ -6,6 +6,20 @@ Replace single shared username/password auth with per-user GitHub OAuth, add per
 
 ---
 
+## PR Sequence
+
+Three independently shippable PRs, each teaching one concept. Keep the allow-list locked to your own GitHub login (`ALLOWED_LOGINS=jeffhoek`) until PR 2 lands so there's no public-abuse window.
+
+| PR | Scope | Steps | Concepts to study |
+|---|---|---|---|
+| **1 — OAuth** | Swap password auth for GitHub OAuth, allow-list to your login | 3 (OAuth fields only), 4, 7 (OAuth env vars), 8 (OAuth + rollout sections) | Chainlit `@cl.oauth_callback`, OAuth redirect flow, allow-list patterns |
+| **2 — Rate limiting** | Per-user daily cap tracked in Postgres | 1, 2 (just `check_and_increment`), 3 (`daily_query_limit`), 5, 7 (limit env vars), 8 (limit guidance + tests) | atomic upsert (`INSERT … ON CONFLICT DO UPDATE`), two-phase TOCTOU pattern, Pydantic-AI `RunResult.usage()` |
+| **3 — Admin dashboard** | `/admin` page showing per-user usage + estimated cost | 2 (add `get_usage_stats`), 3 (`admin_secret`, cost constants, startup guard), 6, 7 (admin env vars), 8 (admin section + tests) | mounting FastAPI routes on Chainlit's app, HTTP Basic Auth via `secrets.compare_digest`, Jinja2 auto-escaping |
+
+Each PR is fully revertible without touching the others. PR 1 leaves the DB untouched. PR 2 is purely additive on top of PR 1. PR 3 is read-only on top of PR 2.
+
+---
+
 ## Step 1 — Database Schema
 
 **File:** `rag/database.py`
@@ -42,35 +56,28 @@ psql -h localhost -U postgresuser -d mydb -c "CREATE TABLE IF NOT EXISTS user_us
 
 ## Step 2 — `rag/usage.py` (new file)
 
-Three async functions, all accept `pool` (existing asyncpg pool from `rag.database.get_pool()`):
+Two async functions, both accept `pool` (existing asyncpg pool from `rag.database.get_pool()`):
 
-| Function | Purpose |
-|---|---|
-| `check_and_increment(pool, user_id, limit, input_tokens, output_tokens)` | Atomic check + increment; returns `(allowed: bool, new_count: int)` |
-| `get_usage_stats(pool, input_cost_per_million, output_cost_per_million)` | Aggregate per-user: today / 7-day / 30-day + token totals + estimated cost |
+| Function | Purpose | Lands in |
+|---|---|---|
+| `check_and_increment(pool, user_id, limit, input_tokens, output_tokens)` | Atomic increment; returns `(allowed: bool, new_count: int)` | PR 2 |
+| `get_usage_stats(pool, input_cost_per_million, output_cost_per_million)` | Aggregate per-user: today / 7-day / 30-day + token totals + estimated cost | PR 3 |
 
 **No module-level cost constants.** Token prices are read from `Settings` by the caller and passed as arguments so there is one source of truth.
 
-`check_and_increment` collapses the former `check_rate_limit` + `increment_usage` into a single atomic SQL statement to eliminate the check-then-act race condition where two concurrent requests could both pass the limit check before either increments the counter:
+`check_and_increment` is one atomic SQL statement, eliminating the check-then-act race where two concurrent requests could both pass a separate limit check before either increments the counter:
 
 ```sql
-WITH upserted AS (
-    INSERT INTO user_usage (user_identifier, query_date, query_count, input_tokens, output_tokens)
-    VALUES ($1, CURRENT_DATE, 1, $2, $3)
-    ON CONFLICT (user_identifier, query_date) DO UPDATE SET
-        query_count   = user_usage.query_count + 1,          -- always increment for audit trail
-        input_tokens  = CASE WHEN user_usage.query_count < $4
-                             THEN user_usage.input_tokens + EXCLUDED.input_tokens
-                             ELSE user_usage.input_tokens END,
-        output_tokens = CASE WHEN user_usage.query_count < $4
-                             THEN user_usage.output_tokens + EXCLUDED.output_tokens
-                             ELSE user_usage.output_tokens END
-    RETURNING query_count, $4 AS lim
-)
-SELECT query_count <= lim AS allowed, query_count FROM upserted
+INSERT INTO user_usage (user_identifier, query_date, query_count, input_tokens, output_tokens)
+VALUES ($1, CURRENT_DATE, 1, $2, $3)
+ON CONFLICT (user_identifier, query_date) DO UPDATE SET
+    query_count   = user_usage.query_count   + 1,
+    input_tokens  = user_usage.input_tokens  + EXCLUDED.input_tokens,
+    output_tokens = user_usage.output_tokens + EXCLUDED.output_tokens
+RETURNING query_count
 ```
 
-`$4` is the limit. `query_count` is always incremented so over-limit calls are visible in the DB for abuse auditing; cap the display value in the dashboard template. The token CASE guards prevent accumulating tokens for blocked requests. On the 21st call `query_count` returns 21 and `21 <= 20 = false` correctly blocks it.
+Python then computes `allowed = new_count <= limit` and returns `(allowed, new_count)`. The two-phase pattern in Step 5 short-circuits already-blocked users *before* this query runs, so the increment only fires on a request that the pre-check believed was under the limit — over-limit rows only appear in the small TOCTOU race window, and the token cost of those rows is negligible. Keep the SQL boring; add CASE guards or audit-only increments later only if real abuse patterns warrant them.
 
 ---
 
@@ -337,13 +344,34 @@ Recommended starting values based on expected LLM cost per query. E.g. at ~$0.01
 
 ## Implementation Sequence
 
+Grouped by PR (see [PR Sequence](#pr-sequence) at top). Within a PR, land steps in the listed order.
+
+### PR 1 — OAuth
+
+| # | Step | Files changed |
+|---|---|---|
+| 3a | OAuth + allow-list config fields only | `config.py` |
+| 4 | OAuth swap | `app.py` |
+| 7a | OAuth env vars (remove `APP_USERNAME`/`APP_PASSWORD`, add `OAUTH_GITHUB_*`, `CHAINLIT_AUTH_SECRET`, allow-list vars, `OPEN_REGISTRATION`) | `.env.example` |
+| 8a | OAuth setup + rollout steps 1–4 + OAuth tests | `docs/public-access-setup.md` (new) |
+
+### PR 2 — Rate limiting
+
 | # | Step | Files changed |
 |---|---|---|
 | 1 | DB schema | `rag/database.py` |
-| 2 | Usage helpers | `rag/usage.py` (new) — `check_and_increment`, `get_usage_stats` |
-| 3 | Config fields | `config.py` |
-| 4 | OAuth swap | `app.py` |
-| 5 | Rate limiting | `app.py` |
+| 2a | `check_and_increment` only | `rag/usage.py` (new) |
+| 3b | `daily_query_limit` config field | `config.py` |
+| 5 | Rate limiting (two-phase) | `app.py` |
+| 7b | `DAILY_QUERY_LIMIT` env var | `.env.example` |
+| 8b | Rate limit guidance + limit tests | `docs/public-access-setup.md` |
+
+### PR 3 — Admin dashboard
+
+| # | Step | Files changed |
+|---|---|---|
+| 2b | Add `get_usage_stats` | `rag/usage.py` |
+| 3c | `admin_secret`, cost constants, module-level startup guard | `config.py`, `app.py` |
 | 6 | Admin dashboard | `admin/__init__.py`, `admin/dashboard.py`, `admin/templates/dashboard.html` (all new), `app.py` |
-| 7 | Env example | `.env.example` |
-| 8 | Documentation | `docs/public-access-setup.md` (new) |
+| 7c | `ADMIN_SECRET` env var | `.env.example` |
+| 8c | Admin section + dashboard tests | `docs/public-access-setup.md` |
