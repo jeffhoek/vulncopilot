@@ -21,6 +21,9 @@ param pipelineServicePrincipalObjectId string
 @description('Enable Logfire observability (requires logfire-token in Key Vault)')
 param logfireEnabled bool = false
 
+@description('Cron schedule (UTC) for the weekly ETL refresh job. Default: Mondays 06:00 UTC.')
+param etlCronExpression string = '0 6 * * 1'
+
 var appName = 'chainlit-rag'
 var tags = {
   environment: environment
@@ -30,6 +33,9 @@ var tags = {
 var identityName = 'id-${appName}-${environment}'
 var appServicePlanName = 'asp-${appName}-${environment}'
 var appServiceName = 'app-${appName}-${environment}'
+var logAnalyticsName = 'log-${appName}-${environment}'
+var managedEnvironmentName = 'cae-${appName}-${environment}'
+var etlJobName = 'job-${appName}-etl-${environment}'
 
 // Step 1: User-Assigned Managed Identity (must run first)
 module identity 'modules/identity.bicep' = {
@@ -97,6 +103,27 @@ module policy 'modules/policy.bicep' = {
   name: 'policy'
 }
 
+// Step 7: Scheduled ETL job (Container Apps Job) — weekly KEV + NVD refresh.
+// Depends on rbac so the identity can pull from ACR and read Key Vault secrets.
+module etlJob 'modules/etl-job.bicep' = {
+  name: 'etlJob'
+  dependsOn: [
+    rbac
+  ]
+  params: {
+    location: location
+    logAnalyticsName: logAnalyticsName
+    managedEnvironmentName: managedEnvironmentName
+    jobName: etlJobName
+    identityId: identity.outputs.identityId
+    acrLoginServer: acr.outputs.loginServer
+    keyVaultName: keyVaultName
+    cronExpression: etlCronExpression
+    tags: tags
+  }
+}
+
 output appServiceUrl string = 'https://${appService.outputs.defaultHostName}'
 output acrLoginServer string = acr.outputs.loginServer
 output keyVaultUri string = keyVault.outputs.keyVaultUri
+output etlJobName string = etlJob.outputs.jobName

@@ -154,6 +154,7 @@ az deployment group create \
 4. `appService` — App Service Plan (B2) + Web App with all app settings and KV references
 5. `rbac` — All role assignments (must complete before App Service resolves KV refs)
 6. `policy` — Azure Policy assignments (HTTPS-only, require `environment`/`application` tags)
+7. `etlJob` — Container Apps Environment + scheduled ETL job (depends on `rbac` for ACR pull / KV read)
 
 ---
 
@@ -182,7 +183,7 @@ az role assignment create \
 
 Use the bash `for` loop with `read` shell built-in to securely enter the env vars:
 ```bash
-for var in ANTHROPIC_API_KEY OPENAI_API_KEY APP_PASSWORD CHAINLIT_AUTH_SECRET PG_DATABASE_URL MCP_API_KEY LOGFIRE_TOKEN; do
+for var in ANTHROPIC_API_KEY OPENAI_API_KEY APP_PASSWORD CHAINLIT_AUTH_SECRET PG_DATABASE_URL MCP_API_KEY LOGFIRE_TOKEN NVD_API_KEY; do
   echo "$var" && read -rs $var
 done
 ```
@@ -226,6 +227,11 @@ az keyvault secret set \
   --vault-name kv-chainlit-rag-dev \
   --name logfire-token \
   --value "$LOGFIRE_TOKEN"
+
+az keyvault secret set \
+  --vault-name kv-chainlit-rag-dev \
+  --name nvd-api-key \
+  --value "$NVD_API_KEY"
 ```
 
 > `mcp-api-key` must exist before the pipeline runs — if absent, the App Service
@@ -236,6 +242,11 @@ az keyvault secret set \
 > Retrieve the token from your Logfire project settings under **API Tokens**.
 > `LOGFIRE_ENABLED` is controlled by `logfireEnabled` in `infra/parameters.dev.bicepparam`
 > (defaults to `false` in the Bicep module; set to `true` in the param file to enable).
+
+> `nvd-api-key` is consumed by the scheduled ETL job (see [Scheduled ETL Refresh](#scheduled-etl-refresh-container-apps-job)),
+> not the App Service. The job still runs without it, but NVD throttles unauthenticated
+> callers to 5 req/30s (vs 50 with a key), so a multi-week backfill will be far slower.
+> Request a free key at <https://nvd.nist.gov/developers/request-an-api-key>.
 
 Restart the App Service to re-resolve the Key Vault references:
 
@@ -341,6 +352,93 @@ uv run python scripts/load_nvd.py
 # No app restart needed — data is queried live from Timescale Cloud
 ```
 
+For an automated weekly refresh instead of running these by hand, see
+[Scheduled ETL Refresh](#scheduled-etl-refresh-container-apps-job) below.
+
+---
+
+## Scheduled ETL Refresh (Container Apps Job)
+
+The KEV and NVD datasets need periodic refreshes. Rather than running the loaders
+by hand, a **Container Apps Job** (`job-chainlit-rag-etl-<env>`) runs them on a cron
+schedule — by default Mondays 06:00 UTC. It reuses the web app's container image,
+managed identity, ACR, and Key Vault, and scales to zero between runs (you pay only
+for the few minutes each weekly run takes).
+
+Provisioned by `infra/modules/etl-job.bicep` and wired into `main.bicep` as Step 7.
+
+### Why a Container Apps Job (not Functions / WebJobs)
+
+- **No timeout ceiling that matters** — `replicaTimeout` is set to 2h; a multi-week
+  catch-up backfill won't be killed mid-run. Azure Functions on the Consumption plan
+  caps at 10 minutes, which is too short for a large Phase 2 modified-CVE sweep.
+- **Reuses the existing stack** — same image in ACR, same user-assigned identity
+  (already has `AcrPull` + `Key Vault Secrets User` from the `rbac` module), same
+  Key Vault secrets. No new auth model, no new role assignments.
+- **Serverless billing** — the job has no idle replicas between Mondays.
+
+### What it runs
+
+```
+load_nvd_full.py --incremental   # full-NVD incremental FIRST
+load_kev.py                      # then KEV catalog
+load_nvd.py                      # then KEV-scoped NVD enrichment
+```
+
+> **Order is deliberate.** `load_kev.py` / `load_nvd.py` upsert KEV CVEs into
+> `nvd_vulnerabilities` with recent `last_modified` / `published` dates. The full
+> incremental derives its start from `MAX(last_modified)` / `MAX(published)` across
+> that table, so if the KEV loaders run *first* they advance the high-water mark and
+> the incremental only re-scans the last day — silently skipping everything else.
+> Running `load_nvd_full.py --incremental` first avoids the poisoned watermark.
+
+### Secrets
+
+The job reads three Key Vault secrets via the managed identity (Container Apps
+secret refs, not App Service `@Microsoft.KeyVault(...)` references):
+
+| Env var | Key Vault secret | Notes |
+|---|---|---|
+| `OPENAI_API_KEY` | `openai-api-key` | embeddings (shared with the web app) |
+| `PG_DATABASE_URL` | `database-url` | target database (shared with the web app) |
+| `NVD_API_KEY` | `nvd-api-key` | NVD rate limit 50/30s vs 5/30s — add in Step 4.1 |
+
+### Adjusting the schedule
+
+Override `etlCronExpression` (UTC) at deploy time or in `parameters.dev.bicepparam`:
+
+```bicep
+param etlCronExpression = '0 6 * * 1'   // default: Mondays 06:00 UTC
+```
+
+### Operating the job
+
+```bash
+# Trigger an immediate run (e.g. to catch up after a missed window)
+az containerapp job start \
+  --name job-chainlit-rag-etl-dev \
+  --resource-group rg-chainlit-rag-dev
+
+# List recent executions and their status
+az containerapp job execution list \
+  --name job-chainlit-rag-etl-dev \
+  --resource-group rg-chainlit-rag-dev \
+  --query "[].{name:name, status:properties.status, start:properties.startTime}" -o table
+
+# Stream logs for a specific execution
+az containerapp job logs show \
+  --name job-chainlit-rag-etl-dev \
+  --resource-group rg-chainlit-rag-dev \
+  --execution <execution-name> --follow
+```
+
+> **Recovering from a long gap.** A weekly schedule keeps the watermark current, so
+> each run only syncs ~7 days. If runs were paused for weeks, the incremental's
+> auto-derived start may be too recent (especially if KEV loaders ran in between) —
+> identify the last full-sync date from the per-day `last_modified` counts and pass
+> `--since <date>` for a one-off manual catch-up before relying on the schedule again.
+> See the [Data Loading guide](data-loading.md) for the `--since` workflow.
+
 ---
 
 ## MCP Server
@@ -408,3 +506,14 @@ See [docs/mcp-server.md](mcp-server.md) for the full MCP server operational guid
 **Policy assignment fails with authorization error**
 - `Microsoft.Authorization/policyAssignments` requires `Resource Policy Contributor` on the resource group
 - Run the `policy` module manually the first time with a higher-privileged identity, or grant the pipeline SP that role temporarily
+
+**ETL job only syncs the last day (misses weeks of CVEs)**
+- The KEV loaders ran before the full incremental and advanced the high-water mark — confirm the job runs `load_nvd_full.py --incremental` *first* (it does in `etl-job.bicep`)
+- For a one-off catch-up, run the job's loader manually with `--since <last-full-sync-date>`; find that date from the per-day `last_modified` counts (see [Data Loading guide](data-loading.md))
+
+**ETL job fails pulling the image or reading secrets**
+- The job uses the *same* managed identity as the App Service — confirm `AcrPull` and `Key Vault Secrets User` role assignments exist (they're created by the `rbac` module at resource-group scope)
+- Confirm `nvd-api-key`, `openai-api-key`, and `database-url` all exist in Key Vault (`az keyvault secret list --vault-name kv-chainlit-rag-dev -o table`)
+
+**ETL job run terminated before completing**
+- A large backfill may exceed `replicaTimeout` (default 7200s/2h) — raise it in `etl-job.bicep`, or split the catch-up into smaller `--since` windows run manually
