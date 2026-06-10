@@ -61,6 +61,24 @@ def run_step(label: str, argv: list[str]) -> dict:
     }
 
 
+def run_pipeline(steps: list[tuple[str, list[str]]], runner=run_step) -> list[dict]:
+    """Run steps in order, stopping at the first failure.
+
+    Stopping early is what protects the incremental's high-water mark: load_nvd.py
+    (KEV-scoped) writes recent last_modified dates into nvd_vulnerabilities, so
+    letting it run after a failed NVD full incremental would poison the mark the
+    next incremental derives its start from — silently skipping everything.
+    Returns one result dict per step actually run.
+    """
+    results: list[dict] = []
+    for label, argv in steps:
+        result = runner(label, argv)
+        results.append(result)
+        if not result["ok"]:
+            break
+    return results
+
+
 def build_email(results: list[dict], total_elapsed: float) -> tuple[str, str]:
     """Return (subject, plain-text body) summarizing the run."""
     all_ok = all(r["ok"] for r in results)
@@ -106,14 +124,14 @@ def send_email(subject: str, body: str) -> None:
 
 def main() -> int:
     overall_start = time.time()
-    results = [run_step(label, argv) for label, argv in STEPS]
+    results = run_pipeline(STEPS)
     total_elapsed = time.time() - overall_start
 
     subject, body = build_email(results, total_elapsed)
     print(f"\n{subject}\n{body}")
     send_email(subject, body)
 
-    return 0 if all(r["ok"] for r in results) else 1
+    return 0 if results and all(r["ok"] for r in results) else 1
 
 
 if __name__ == "__main__":
