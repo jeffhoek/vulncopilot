@@ -186,7 +186,8 @@ az deployment group create \
 4. `appService` — App Service Plan (B2) + Web App with all app settings and KV references
 5. `rbac` — All role assignments (must complete before App Service resolves KV refs)
 6. `policy` — Azure Policy assignments (HTTPS-only, require `environment`/`application` tags)
-7. `etlJob` — Container Apps Environment + scheduled ETL job (depends on `rbac` for ACR pull / KV read)
+7. `email` — Azure Communication Services + Email service (Azure-managed sender domain) for the results email
+8. `etlJob` — Container Apps Environment + scheduled ETL job (depends on `rbac` for ACR pull / KV read)
 
 ---
 
@@ -406,9 +407,9 @@ For an automated weekly refresh instead of running these by hand, see
 
 The KEV and NVD datasets need periodic refreshes. Rather than running the loaders
 by hand, a **Container Apps Job** (`job-chainlit-rag-etl-<env>`) runs them on a cron
-schedule — by default Mondays 06:00 UTC. It reuses the web app's container image,
-managed identity, ACR, and Key Vault, and scales to zero between runs (you pay only
-for the few minutes each weekly run takes).
+schedule, set by `etlCronExpression` in `infra/parameters.dev.bicepparam`. It reuses
+the web app's container image, managed identity, ACR, and Key Vault, and scales to
+zero between runs (you pay only for the few minutes each run takes).
 
 Provisioned by `infra/modules/etl-job.bicep` and wired into `main.bicep` as Step 7.
 
@@ -424,6 +425,9 @@ Provisioned by `infra/modules/etl-job.bicep` and wired into `main.bicep` as Step
 
 ### What it runs
 
+The job's entrypoint is `scripts/run_etl.py`, which runs the three loaders in
+order, captures each step's output and timing, and emails a results summary:
+
 ```
 load_nvd_full.py --incremental   # full-NVD incremental FIRST
 load_kev.py                      # then KEV catalog
@@ -437,10 +441,32 @@ load_nvd.py                      # then KEV-scoped NVD enrichment
 > the incremental only re-scans the last day — silently skipping everything else.
 > Running `load_nvd_full.py --incremental` first avoids the poisoned watermark.
 
-### Secrets
+`run_etl.py` exits non-zero if any loader fails (so the platform records the run
+as failed), and a failed email never masks a successful sync.
 
-The job reads three Key Vault secrets via the managed identity (Container Apps
-secret refs, not App Service `@Microsoft.KeyVault(...)` references):
+### Results email (Azure Communication Services)
+
+After each run the job emails a summary — overall `SUCCESS`/`FAILED`, per-step
+status, duration, and the key output lines (`Done! Synced N CVEs`, errors). It uses
+**Azure Communication Services Email** with an **Azure-managed sender domain**
+(`donotreply@<guid>.azurecomm.net`) — no DNS/domain verification needed — and
+authenticates with the job's **managed identity** (no SMTP keys or secrets).
+
+Provisioned by `infra/modules/email.bicep` (Step 7). The recipient is set by
+`etlEmailTo` in `parameters.dev.bicepparam`; the sender address is auto-derived and
+surfaced as the `etlEmailSender` deployment output.
+
+> The managed identity is granted **Contributor scoped to the ACS resource only**
+> (ACS has no fine-grained email-send role). If the first run logs an auth error
+> sending email, that role assignment is the thing to check.
+
+> **Gmail/Outlook spam:** mail from the Azure-managed `azurecomm.net` domain may land
+> in spam initially. Check the spam folder on the first run and mark as “not spam.”
+
+### Secrets and environment
+
+Secrets come from Key Vault via the managed identity (Container Apps secret refs,
+not App Service `@Microsoft.KeyVault(...)` references):
 
 | Env var | Key Vault secret | Notes |
 |---|---|---|
@@ -448,13 +474,29 @@ secret refs, not App Service `@Microsoft.KeyVault(...)` references):
 | `PG_DATABASE_URL` | `database-url` | target database (shared with the web app) |
 | `NVD_API_KEY` | `nvd-api-key` | NVD rate limit 50/30s vs 5/30s — add in Step 4.1 |
 
+Plus these non-secret env vars, set from Bicep (no Key Vault needed):
+
+| Env var | Source | Purpose |
+|---|---|---|
+| `AZURE_CLIENT_ID` | identity client ID | selects the managed identity for ACS auth |
+| `ACS_ENDPOINT` | `email` module output | ACS endpoint for sending mail |
+| `ACS_SENDER` | `email` module output | verified `donotreply@…` sender address |
+| `ETL_EMAIL_TO` | `etlEmailTo` param | recipient(s), comma-separated |
+
 ### Adjusting the schedule
 
-Override `etlCronExpression` (UTC) at deploy time or in `parameters.dev.bicepparam`:
+Set `etlCronExpression` (UTC) in `parameters.dev.bicepparam`. Start frequent while
+validating, then dial back as you gain confidence:
 
-```bicep
-param etlCronExpression = '0 6 * * 1'   // default: Mondays 06:00 UTC
-```
+| Cron | Cadence | When |
+|---|---|---|
+| `0 6,18 * * *` | Twice daily (06:00 + 18:00 UTC) | Bootstrap — watching it work |
+| `0 6 * * *` | Daily (06:00 UTC) | Early steady state |
+| `0 6 * * 1` | Weekly (Mondays 06:00 UTC) | Steady state — index overhead is lowest |
+
+Each change is a one-line param edit; redeploy the `etlJob` module (or the whole
+template) to apply. More frequent runs mean smaller per-run incremental windows and
+lower HNSW index churn, at the cost of more (cheap) job executions.
 
 ### Operating the job
 
