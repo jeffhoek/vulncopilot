@@ -183,13 +183,17 @@ az role assignment create \
 
 Use the bash `for` loop with `read` shell built-in to securely enter the env vars:
 ```bash
-for var in ANTHROPIC_API_KEY OPENAI_API_KEY APP_PASSWORD CHAINLIT_AUTH_SECRET PG_DATABASE_URL MCP_API_KEY LOGFIRE_TOKEN NVD_API_KEY; do
+for var in ANTHROPIC_API_KEY OPENAI_API_KEY APP_PASSWORD CHAINLIT_AUTH_SECRET PG_DATABASE_URL PG_DATABASE_URL_READONLY MCP_API_KEY LOGFIRE_TOKEN NVD_API_KEY; do
   echo "$var" && read -rs $var
 done
 ```
 
-> For `PG_DATABASE_URL`, enter the full Timescale Cloud connection string:
-> `postgresql://user:password@hostname.tsdb.cloud.timescale.com:5432/dbname?sslmode=require`
+> **Two database URLs, two roles** (see [docs/supabase-readonly-role.md](supabase-readonly-role.md)):
+> - `PG_DATABASE_URL` → **write/admin** role (`app_etl`/`postgres`) → stored as `database-url`, used by the **ETL job**. Needs DDL since the loaders create tables/indexes.
+> - `PG_DATABASE_URL_READONLY` → **read-only** role (`app_readonly`) → stored as `database-url-readonly`, used by the **live app**. The app runs with `DB_INIT_SCHEMA=false` so it never attempts schema DDL.
+>
+> Create the schema once with the admin connection (or let the ETL job's first run
+> create it) **before** the read-only app serves traffic.
 
 Create the Azure Key Vault secrets:
 ```bash
@@ -220,6 +224,11 @@ az keyvault secret set \
 
 az keyvault secret set \
   --vault-name kv-chainlit-rag-dev \
+  --name database-url-readonly \
+  --value "$PG_DATABASE_URL_READONLY"
+
+az keyvault secret set \
+  --vault-name kv-chainlit-rag-dev \
   --name mcp-api-key \
   --value "$MCP_API_KEY"
 
@@ -233,6 +242,10 @@ az keyvault secret set \
   --name nvd-api-key \
   --value "$NVD_API_KEY"
 ```
+
+> `database-url-readonly` must exist before the pipeline runs — the App Service
+> resolves it as its `PG_DATABASE_URL`. If absent, the KV reference fails and the
+> app can't connect. (The ETL job uses the separate `database-url` write/admin secret.)
 
 > `mcp-api-key` must exist before the pipeline runs — if absent, the App Service
 > will start with a warning and the `/mcp` route will reject all requests with 401.
