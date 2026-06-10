@@ -89,6 +89,30 @@ stages:
                     inlineScript: az bicep upgrade
 
                 - task: AzureCLI@2
+                  displayName: Register resource providers
+                  inputs:
+                    azureSubscription: $(azureServiceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    # Namespaces used by the ETL job (Container Apps + Log Analytics)
+                    # and the results email (ACS). Provider registration is a one-time,
+                    # subscription-scoped action; we only attempt it when a namespace is
+                    # not already Registered, so the pipeline SP (resource-group-scoped)
+                    # doesn't need subscription-level register permission once they're set.
+                    inlineScript: |
+                      set -e
+                      for ns in Microsoft.OperationalInsights Microsoft.App Microsoft.Communication; do
+                        state=$(az provider show -n "$ns" --query registrationState -o tsv 2>/dev/null || echo "NotPresent")
+                        if [ "$state" = "Registered" ]; then
+                          echo "$ns: already Registered"
+                        else
+                          echo "$ns: $state — registering..."
+                          az provider register --namespace "$ns" --wait
+                          echo "$ns: $(az provider show -n "$ns" --query registrationState -o tsv)"
+                        fi
+                      done
+
+                - task: AzureCLI@2
                   displayName: Bicep what-if (dry run)
                   inputs:
                     azureSubscription: $(azureServiceConnection)

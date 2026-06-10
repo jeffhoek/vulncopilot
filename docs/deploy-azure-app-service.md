@@ -61,6 +61,38 @@ az group create \
   --tags environment=dev application=chainlit-rag
 ```
 
+### 1.1 Register resource providers (one-time, subscription-scoped)
+
+The infrastructure uses three resource provider namespaces that may not be
+registered on a fresh subscription. Bicep can't register them for you — an
+unregistered namespace fails the deploy with `MissingSubscriptionRegistration`.
+
+| Namespace | Needed for |
+|---|---|
+| `Microsoft.App` | Container Apps Environment + scheduled ETL job |
+| `Microsoft.OperationalInsights` | Log Analytics workspace (backs the Container Apps env) |
+| `Microsoft.Communication` | Azure Communication Services + Email (ETL results email) |
+
+Register them once (idempotent; `--wait` blocks until `Registered`, ~1–5 min each):
+
+```bash
+az account set --subscription <subscription-id>
+for ns in Microsoft.App Microsoft.OperationalInsights Microsoft.Communication; do
+  az provider register --namespace "$ns" --wait
+done
+
+# Verify
+for ns in Microsoft.App Microsoft.OperationalInsights Microsoft.Communication; do
+  echo "$ns: $(az provider show -n $ns --query registrationState -o tsv)"
+done
+```
+
+> Provider registration requires `*/register/action` at **subscription** scope
+> (Owner/Contributor have it). The pipeline's resource-group-scoped service principal
+> does not, so do this once with a subscription-privileged login. The pipeline's
+> "Register resource providers" step only *attempts* registration for namespaces that
+> aren't already `Registered`, so it won't fail on permissions once this is done.
+
 ---
 
 ## Step 2: Azure DevOps Setup (one-time)
