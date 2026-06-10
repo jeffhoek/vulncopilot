@@ -438,11 +438,11 @@ az containerapp job execution list \
   --resource-group rg-chainlit-rag-dev \
   --query "[].{name:name, status:properties.status, start:properties.startTime}" -o table
 
-# Stream logs for a specific execution
+# Stream logs for a RUNNING execution (live replica only — see "Viewing logs" below)
 az containerapp job logs show \
   --name job-chainlit-rag-etl-dev \
   --resource-group rg-chainlit-rag-dev \
-  --execution <execution-name> --follow
+  --container etl --execution <execution-name> --follow
 ```
 
 > **Recovering from a long gap.** A weekly schedule keeps the watermark current, so
@@ -451,6 +451,66 @@ az containerapp job logs show \
 > identify the last full-sync date from the per-day `last_modified` counts and pass
 > `--since <date>` for a one-off manual catch-up before relying on the schedule again.
 > See the [Data Loading guide](data-loading.md) for the `--since` workflow.
+
+### Viewing logs
+
+The job writes two kinds of logs to the `log-chainlit-rag-dev` Log Analytics workspace:
+
+| Table | Contents |
+|---|---|
+| `ContainerAppConsoleLogs_CL` | container **stdout/stderr** — the loader output, CVE counts, and (after the email branch) the `SUCCESS`/`FAILED` summary and `Email sent` line |
+| `ContainerAppSystemLogs_CL` | platform events — image pull, container created/started, execution scheduled/completed |
+
+> **`az containerapp job logs show` only works for a *running* execution.** Container
+> Apps garbage-collects the replica (pod) once a job execution completes, so for a
+> finished run the command returns `No replicas found for execution`. Use it with
+> `--follow` right after `az containerapp job start` to watch a live run; for past
+> runs, query Log Analytics (below), where the console output is persisted.
+
+**From the CLI** (`az monitor log-analytics query`):
+
+```bash
+WS=$(az monitor log-analytics workspace show \
+  -g rg-chainlit-rag-dev -n log-chainlit-rag-dev --query customerId -o tsv)
+
+# Full console output from the last 2 days
+az monitor log-analytics query --workspace "$WS" -o table \
+  --analytics-query "ContainerAppConsoleLogs_CL | where TimeGenerated > ago(2d) | where ContainerName_s == 'etl' | order by TimeGenerated asc | project TimeGenerated, Log_s"
+
+# Just the run summary + email outcome
+az monitor log-analytics query --workspace "$WS" -o table \
+  --analytics-query "ContainerAppConsoleLogs_CL | where TimeGenerated > ago(2d) | where Log_s has_any ('SUCCESS','FAILED','Synced','Done!','Email sent','failed to send') | order by TimeGenerated asc | project TimeGenerated, Log_s"
+```
+
+> Requires `Log Analytics Reader` on the workspace and the `log-analytics` CLI
+> extension (auto-installs on first use).
+
+**In the portal** (Log Analytics workspace → **Logs**; close the *Queries hub* overlay
+and toggle off "Always show Queries hub" to reach the KQL editor), run the same KQL:
+
+```kql
+// All console output for the ETL container
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(2d)
+| where ContainerName_s == "etl"
+| order by TimeGenerated asc
+| project TimeGenerated, Log_s
+
+// Scope to one execution (replica name carries the execution id, e.g. ...-yahqcyx-xxxxx)
+ContainerAppConsoleLogs_CL
+| where ContainerGroupName_s has "<execution-id>"
+| order by TimeGenerated asc
+| project TimeGenerated, Log_s
+
+// Platform events (image pull, start/complete) for the job
+ContainerAppSystemLogs_CL
+| where JobName_s == "job-chainlit-rag-etl-dev"
+| order by TimeGenerated desc
+| project TimeGenerated, Log_s
+```
+
+> Console logs have a 2–10 min ingestion lag into Log Analytics — empty results right
+> after a run usually mean "not ingested yet," not "no logs."
 
 ---
 
