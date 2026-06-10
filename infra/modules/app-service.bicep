@@ -142,8 +142,15 @@ resource appService 'Microsoft.Web/sites@2023-12-01' = {
           value: '["${actionButtons}"]'
         }
         {
+          // Read-only role for the live app (see docs/supabase-readonly-role.md).
+          // The ETL job uses the separate write/admin 'database-url' secret.
           name: 'PG_DATABASE_URL'
-          value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=database-url)'
+          value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=database-url-readonly)'
+        }
+        {
+          // Read-only role can't run schema DDL; admin/ETL connection owns the schema.
+          name: 'DB_INIT_SCHEMA'
+          value: 'false'
         }
         {
           name: 'WEBSITES_PORT'

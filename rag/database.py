@@ -87,8 +87,11 @@ async def init_db() -> asyncpg.Pool:
         init=_init_connection,
     )
 
-    async with _pool.acquire() as conn:
-        await conn.execute(SCHEMA_SQL)
+    # A read-only app role can't run DDL; schema is created by the admin/ETL
+    # connection instead (see settings.db_init_schema / docs/supabase-readonly-role.md).
+    if settings.db_init_schema:
+        async with _pool.acquire() as conn:
+            await conn.execute(SCHEMA_SQL)
 
     return _pool
 

@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     pg_password: str = ""
     pg_database: str = "inventory"
 
+    # When False, init_db() skips schema DDL and only connects/reads. Set this for
+    # the live app when it uses a read-only role; schema is created by the
+    # admin/ETL connection instead. See docs/supabase-readonly-role.md.
+    db_init_schema: bool = True
+
     def get_database_dsn(self) -> str:
         if self.pg_database_url:
             return self.pg_database_url
