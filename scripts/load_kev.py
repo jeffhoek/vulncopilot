@@ -18,6 +18,7 @@ from openai import AsyncOpenAI
 from pgvector.asyncpg import register_vector
 
 from config import settings
+from scripts.etl_report import LoaderReport
 
 KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 BATCH_SIZE = 500
@@ -111,13 +112,14 @@ async def upsert_records(conn: asyncpg.Connection, vulns: list[dict], embeddings
     print(f"  Upserted {len(vulns)}/{len(vulns)} total")
 
 
-async def main() -> None:
+async def run() -> LoaderReport:
+    """ETL entrypoint: fetch, embed, and upsert the KEV catalog; return a report."""
     print("Starting CISA KEV ETL...")
 
     vulns = await fetch_kev_data()
     if not vulns:
         print("No vulnerabilities found. Exiting.")
-        return
+        return LoaderReport(summary="No KEV vulnerabilities returned by the feed", metrics={"fetched": 0, "loaded": 0})
 
     contents = [build_content(v) for v in vulns]
 
@@ -134,7 +136,10 @@ async def main() -> None:
     await conn.close()
 
     print(f"Done! Loaded {len(vulns)} KEV records.")
+    return LoaderReport(
+        summary=f"Loaded {len(vulns)} KEV records", metrics={"fetched": len(vulns), "loaded": len(vulns)}
+    )
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(run())

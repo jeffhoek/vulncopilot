@@ -1,16 +1,18 @@
 """ETL orchestrator for the scheduled refresh job.
 
-Runs the loaders, captures each step's output and timing, then emails a results
-summary via Azure Communication Services.
+Runs each loader in-process and collects a structured LoaderReport (summary line
++ metrics), then emails a results summary via Azure Communication Services.
+Running in-process (rather than as subprocesses) streams each loader's logs live
+to the job log and lets the email render real metrics instead of grepping stdout.
 
-The loaders are independent — the full NVD incremental writes
-nvd_vulnerabilities and the KEV catalog writes kev_vulnerabilities — so every
-step runs regardless of whether another fails, and their order doesn't matter.
+The loaders are independent — the full NVD incremental writes nvd_vulnerabilities
+and the KEV catalog writes kev_vulnerabilities — so every step runs regardless of
+whether another fails, and their order doesn't matter.
 
-Email is best-effort and optional: if the ACS_* / ETL_EMAIL_TO env vars are
-unset (e.g. local runs), the email step is skipped. The process exit code
-reflects the ETL outcome only — a failed email never masks a successful sync,
-and any failed loader exits non-zero so the platform records the failure.
+Email is best-effort and optional: if the ACS_* / ETL_EMAIL_TO env vars are unset
+(e.g. local runs), the email step is skipped. The process exit code reflects the
+ETL outcome only — a failed email never masks a successful sync, and any failed
+loader exits non-zero so the platform records the failure.
 
 Env:
     ACS_ENDPOINT    Azure Communication Services endpoint (https://<host>)
@@ -19,20 +21,26 @@ Env:
     AZURE_CLIENT_ID Client ID of the user-assigned managed identity (for auth)
 """
 
+import asyncio
+import contextlib
+import importlib
 import os
-import subprocess
 import sys
 import time
+import traceback
 from datetime import UTC, datetime
+from pathlib import Path
 
-# (label, argv) — independent loaders; order doesn't affect correctness.
-STEPS: list[tuple[str, list[str]]] = [
-    ("NVD full incremental", [sys.executable, "scripts/load_nvd_full.py", "--incremental"]),
-    ("KEV catalog", [sys.executable, "scripts/load_kev.py"]),
+# Make `scripts.<loader>` importable whether run as `python scripts/run_etl.py`
+# (sys.path[0] is scripts/) or imported as scripts.run_etl (tests).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# (label, "module:attr") — each attr is an async () -> LoaderReport entrypoint,
+# resolved lazily so importing this module stays free of the data-stack deps.
+STEPS: list[tuple[str, str]] = [
+    ("NVD full incremental", "scripts.load_nvd_full:run_incremental"),
+    ("KEV catalog", "scripts.load_kev:run"),
 ]
-
-# Lines worth surfacing in the email body without dumping the entire log.
-HIGHLIGHTS = ("Done!", "Synced", "Upserted", "new CVEs", "modified", "Error", "Traceback", "Failed")
 
 
 def _fmt_duration(seconds: float) -> str:
@@ -40,34 +48,45 @@ def _fmt_duration(seconds: float) -> str:
     return f"{m}m{s:02d}s"
 
 
-def run_step(label: str, argv: list[str]) -> dict:
-    """Run one loader, capturing combined output, exit code, and duration."""
+def _resolve(target: str):
+    """Import 'module:attr' lazily and return the attribute (a coroutine fn)."""
+    module_name, _, attr = target.partition(":")
+    return getattr(importlib.import_module(module_name), attr)
+
+
+def run_step(label: str, target: str) -> dict:
+    """Run one loader in-process, returning its report, timing, and any error.
+
+    The loader's own prints stream straight to the job log. A raised exception is
+    caught here so one loader's failure can't abort the others; the traceback still
+    reaches the log and the step is recorded as failed.
+    """
     print(f"\n=== {label} ===", flush=True)
     started = time.time()
-    proc = subprocess.run(argv, capture_output=True, text=True)
-    elapsed = time.time() - started
-
-    output = (proc.stdout or "") + (proc.stderr or "")
-    print(output, end="", flush=True)  # echo to job logs
-
-    highlights = [line for line in output.splitlines() if any(h in line for h in HIGHLIGHTS)]
+    try:
+        report = asyncio.run(_resolve(target)())
+        ok, summary, metrics, error = True, report.summary, report.metrics, None
+    except Exception as exc:
+        traceback.print_exc()
+        ok, summary, metrics, error = False, "", {}, f"{type(exc).__name__}: {exc}"
     return {
         "label": label,
-        "ok": proc.returncode == 0,
-        "returncode": proc.returncode,
-        "elapsed": elapsed,
-        "highlights": highlights[-15:],  # cap to keep the email readable
+        "ok": ok,
+        "elapsed": time.time() - started,
+        "summary": summary,
+        "metrics": metrics,
+        "error": error,
     }
 
 
-def run_pipeline(steps: list[tuple[str, list[str]]], runner=run_step) -> list[dict]:
+def run_pipeline(steps: list[tuple[str, str]], runner=run_step) -> list[dict]:
     """Run every step, returning one result dict per step.
 
     The loaders are independent (NVD full -> nvd_vulnerabilities, KEV ->
     kev_vulnerabilities), so a failure in one must not skip the other — both
     always run and the summary reports each outcome.
     """
-    return [runner(label, argv) for label, argv in steps]
+    return [runner(label, target) for label, target in steps]
 
 
 def build_email(results: list[dict], total_elapsed: float) -> tuple[str, str]:
@@ -80,10 +99,8 @@ def build_email(results: list[dict], total_elapsed: float) -> tuple[str, str]:
     lines = [f"ETL run {status} at {stamp} (total {_fmt_duration(total_elapsed)})", ""]
     for r in results:
         mark = "OK  " if r["ok"] else "FAIL"
-        lines.append(f"[{mark}] {r['label']} ({_fmt_duration(r['elapsed'])}, exit {r['returncode']})")
-        for h in r["highlights"]:
-            lines.append(f"        {h}")
-        lines.append("")
+        detail = r["summary"] if r["ok"] else (r["error"] or "failed")
+        lines.append(f"[{mark}] {r['label']} ({_fmt_duration(r['elapsed'])}) — {detail}")
     return subject, "\n".join(lines)
 
 
@@ -114,6 +131,10 @@ def send_email(subject: str, body: str) -> None:
 
 
 def main() -> int:
+    # Line-buffer stdout so loader logs stream live to the job log (not block-buffered).
+    with contextlib.suppress(AttributeError, ValueError):
+        sys.stdout.reconfigure(line_buffering=True)
+
     overall_start = time.time()
     results = run_pipeline(STEPS)
     total_elapsed = time.time() - overall_start
