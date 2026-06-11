@@ -20,23 +20,8 @@ def test_run_pipeline_runs_all_steps_when_each_succeeds():
     assert [r["label"] for r in results] == ["step-a", "step-b", "step-c"]
 
 
-def test_run_pipeline_short_circuits_on_first_failure():
-    """A failed loader must stop the chain so a later step can't poison the
-    NVD incremental high-water mark (see run_pipeline docstring)."""
-    ran = []
-
-    def runner(label, argv):
-        ran.append(label)
-        return _result(label, ok=(label != "step-a"))
-
-    results = run_pipeline(STEPS, runner=runner)
-
-    assert ran == ["step-a"]  # step-b and step-c never run
-    assert len(results) == 1
-    assert results[0]["ok"] is False
-
-
-def test_run_pipeline_stops_at_middle_failure():
+def test_run_pipeline_runs_every_step_even_when_one_fails():
+    """The loaders are independent, so a failure in one must not skip the others."""
     ran = []
 
     def runner(label, argv):
@@ -45,8 +30,8 @@ def test_run_pipeline_stops_at_middle_failure():
 
     results = run_pipeline(STEPS, runner=runner)
 
-    assert ran == ["step-a", "step-b"]  # step-c never runs
-    assert [r["ok"] for r in results] == [True, False]
+    assert ran == ["step-a", "step-b", "step-c"]  # nothing is skipped
+    assert [r["ok"] for r in results] == [True, False, True]
 
 
 def test_build_email_success_subject_and_body():

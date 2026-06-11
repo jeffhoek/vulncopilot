@@ -1,16 +1,16 @@
 """ETL orchestrator for the scheduled refresh job.
 
-Runs the three loaders in the correct order, captures each step's output and
-timing, then emails a results summary via Azure Communication Services.
+Runs the loaders, captures each step's output and timing, then emails a results
+summary via Azure Communication Services.
 
-Order matters: the full NVD incremental runs FIRST so the KEV-scoped loaders
-(which write recent last_modified/published dates into nvd_vulnerabilities)
-don't poison the high-water mark the incremental derives its start from.
+The loaders are independent — the full NVD incremental writes
+nvd_vulnerabilities and the KEV catalog writes kev_vulnerabilities — so every
+step runs regardless of whether another fails, and their order doesn't matter.
 
 Email is best-effort and optional: if the ACS_* / ETL_EMAIL_TO env vars are
 unset (e.g. local runs), the email step is skipped. The process exit code
 reflects the ETL outcome only — a failed email never masks a successful sync,
-and a failed sync always exits non-zero so the platform records the failure.
+and any failed loader exits non-zero so the platform records the failure.
 
 Env:
     ACS_ENDPOINT    Azure Communication Services endpoint (https://<host>)
@@ -25,11 +25,10 @@ import sys
 import time
 from datetime import UTC, datetime
 
-# (label, argv) — full NVD incremental first, then KEV catalog, then KEV-scoped NVD.
+# (label, argv) — independent loaders; order doesn't affect correctness.
 STEPS: list[tuple[str, list[str]]] = [
     ("NVD full incremental", [sys.executable, "scripts/load_nvd_full.py", "--incremental"]),
     ("KEV catalog", [sys.executable, "scripts/load_kev.py"]),
-    ("NVD enrichment (KEV-scoped)", [sys.executable, "scripts/load_nvd.py"]),
 ]
 
 # Lines worth surfacing in the email body without dumping the entire log.
@@ -62,21 +61,13 @@ def run_step(label: str, argv: list[str]) -> dict:
 
 
 def run_pipeline(steps: list[tuple[str, list[str]]], runner=run_step) -> list[dict]:
-    """Run steps in order, stopping at the first failure.
+    """Run every step, returning one result dict per step.
 
-    Stopping early is what protects the incremental's high-water mark: load_nvd.py
-    (KEV-scoped) writes recent last_modified dates into nvd_vulnerabilities, so
-    letting it run after a failed NVD full incremental would poison the mark the
-    next incremental derives its start from — silently skipping everything.
-    Returns one result dict per step actually run.
+    The loaders are independent (NVD full -> nvd_vulnerabilities, KEV ->
+    kev_vulnerabilities), so a failure in one must not skip the other — both
+    always run and the summary reports each outcome.
     """
-    results: list[dict] = []
-    for label, argv in steps:
-        result = runner(label, argv)
-        results.append(result)
-        if not result["ok"]:
-            break
-    return results
+    return [runner(label, argv) for label, argv in steps]
 
 
 def build_email(results: list[dict], total_elapsed: float) -> tuple[str, str]:

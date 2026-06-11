@@ -425,24 +425,24 @@ Provisioned by `infra/modules/etl-job.bicep` and wired into `main.bicep` as Step
 
 ### What it runs
 
-The job's entrypoint is `scripts/run_etl.py`, which runs the three loaders in
-order, captures each step's output and timing, and emails a results summary:
+The job's entrypoint is `scripts/run_etl.py`, which runs the loaders, captures
+each step's output and timing, and emails a results summary:
 
 ```
-load_nvd_full.py --incremental   # full-NVD incremental FIRST
-load_kev.py                      # then KEV catalog
-load_nvd.py                      # then KEV-scoped NVD enrichment
+load_nvd_full.py --incremental   # full NVD incremental -> nvd_vulnerabilities
+load_kev.py                      # KEV catalog          -> kev_vulnerabilities
 ```
 
-> **Order is deliberate.** `load_kev.py` / `load_nvd.py` upsert KEV CVEs into
-> `nvd_vulnerabilities` with recent `last_modified` / `published` dates. The full
-> incremental derives its start from `MAX(last_modified)` / `MAX(published)` across
-> that table, so if the KEV loaders run *first* they advance the high-water mark and
-> the incremental only re-scans the last day — silently skipping everything else.
-> Running `load_nvd_full.py --incremental` first avoids the poisoned watermark.
+The two loaders write different tables and are independent, so `run_etl.py` runs
+both regardless of whether either fails — a KEV outage won't skip the NVD refresh,
+and vice versa. It exits non-zero if any loader fails (so the platform records the
+run as failed), and a failed email never masks a successful sync.
 
-`run_etl.py` exits non-zero if any loader fails (so the platform records the run
-as failed), and a failed email never masks a successful sync.
+> **Why no KEV-scoped NVD enrichment step?** An earlier pipeline ran
+> `load_nvd.py` to enrich KEV CVEs with CVSS/CWE data, but `load_nvd_full.py`
+> already loads the full NVD corpus (every KEV CVE included) into the same columns,
+> so it was redundant. Dropping it also removed the ordering constraint its recent
+> `last_modified` writes used to impose on the incremental's high-water mark.
 
 ### Results email (Azure Communication Services)
 
