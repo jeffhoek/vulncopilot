@@ -8,6 +8,28 @@ This guide covers populating the PostgreSQL/pgvector database with CISA KEV and 
 - `.env` configured with `DATABASE_URL` (or `PG_*` vars) and `OPENAI_API_KEY`
 - Dependencies installed (`uv sync`)
 
+### Connecting securely (keep the password out of `argv`)
+
+The `psql` commands below use `"$DATABASE_URL"`. **Never embed the database password
+in that variable** — anything on a command line is visible to every user on the host
+via `ps`, and it lands in your shell history. Instead, export a **password-less**
+connection string and let `~/.pgpass` supply the secret:
+
+```bash
+# password-less — safe to appear in ps / history
+export DATABASE_URL="postgresql://<user>@<host>:5432/<db>"
+```
+
+```
+# ~/.pgpass  (chmod 600)  —  host:port:db:user:password
+<host>:5432:<db>:<user>:<password>
+```
+
+With a matching `~/.pgpass` entry, `psql "$DATABASE_URL"` authenticates with no
+password on the command line. (The Python app reads its own credentialed
+`DATABASE_URL`/`PG_DATABASE_URL` from `.env`, which is never passed on a command
+line — this guidance is only for interactive `psql`.)
+
 Verify pgvector is available:
 
 ```bash
