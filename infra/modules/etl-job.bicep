@@ -8,8 +8,18 @@ param logAnalyticsName string
 param managedEnvironmentName string
 param jobName string
 param identityId string
+param identityClientId string
 param acrLoginServer string
 param keyVaultName string
+
+@description('ACS endpoint for the results email (https://<host>).')
+param acsEndpoint string
+
+@description('Verified ACS sender address for the results email.')
+param acsSender string
+
+@description('Comma-separated recipient address(es) for the results email.')
+param emailTo string
 
 @description('Cron schedule in UTC. Default: Mondays 06:00 UTC.')
 param cronExpression string = '0 6 * * 1'
@@ -22,14 +32,9 @@ param tags object = {}
 var imageRef = '${acrLoginServer}/chainlit-pydanticai-rag:latest'
 var kvBase = 'https://${keyVaultName}${environment().suffixes.keyvaultDns}/secrets'
 
-// Order matters: run the full NVD incremental FIRST so the KEV-scoped loaders
-// (which write recent last_modified/published dates into nvd_vulnerabilities)
-// don't poison the high-water mark the incremental derives its start from.
-var etlCommand = join([
-  '/app/.venv/bin/python scripts/load_nvd_full.py --incremental'
-  '/app/.venv/bin/python scripts/load_kev.py'
-  '/app/.venv/bin/python scripts/load_nvd.py'
-], ' && ')
+// run_etl.py runs the loaders in the correct order (full NVD incremental FIRST so
+// the KEV-scoped loaders don't poison the incremental's high-water mark), captures
+// each step's output, and emails a results summary via ACS.
 
 // Log Analytics workspace backs the Container Apps Environment's log stream.
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
@@ -114,11 +119,8 @@ resource etlJob 'Microsoft.App/jobs@2024-03-01' = {
           name: 'etl'
           image: imageRef
           command: [
-            '/bin/sh'
-            '-c'
-          ]
-          args: [
-            etlCommand
+            '/app/.venv/bin/python'
+            'scripts/run_etl.py'
           ]
           resources: {
             cpu: json('1.0')
@@ -136,6 +138,23 @@ resource etlJob 'Microsoft.App/jobs@2024-03-01' = {
             {
               name: 'NVD_API_KEY'
               secretRef: 'nvd-api-key'
+            }
+            // Identifies the user-assigned identity for DefaultAzureCredential (ACS auth).
+            {
+              name: 'AZURE_CLIENT_ID'
+              value: identityClientId
+            }
+            {
+              name: 'ACS_ENDPOINT'
+              value: acsEndpoint
+            }
+            {
+              name: 'ACS_SENDER'
+              value: acsSender
+            }
+            {
+              name: 'ETL_EMAIL_TO'
+              value: emailTo
             }
           ]
         }

@@ -21,8 +21,11 @@ param pipelineServicePrincipalObjectId string
 @description('Enable Logfire observability (requires logfire-token in Key Vault)')
 param logfireEnabled bool = false
 
-@description('Cron schedule (UTC) for the weekly ETL refresh job. Default: Mondays 06:00 UTC.')
+@description('Cron schedule (UTC) for the ETL refresh job. Default: Mondays 06:00 UTC.')
 param etlCronExpression string = '0 6 * * 1'
+
+@description('Recipient address(es) for the ETL results email (comma-separated).')
+param etlEmailTo string
 
 var appName = 'chainlit-rag'
 var tags = {
@@ -36,6 +39,8 @@ var appServiceName = 'app-${appName}-${environment}'
 var logAnalyticsName = 'log-${appName}-${environment}'
 var managedEnvironmentName = 'cae-${appName}-${environment}'
 var etlJobName = 'job-${appName}-etl-${environment}'
+var communicationServiceName = 'acs-${appName}-${environment}'
+var emailServiceName = 'email-${appName}-${environment}'
 
 // Step 1: User-Assigned Managed Identity (must run first)
 module identity 'modules/identity.bicep' = {
@@ -103,7 +108,18 @@ module policy 'modules/policy.bicep' = {
   name: 'policy'
 }
 
-// Step 7: Scheduled ETL job (Container Apps Job) — weekly KEV + NVD refresh.
+// Step 7: Azure Communication Services Email — sends the ETL results summary.
+module email 'modules/email.bicep' = {
+  name: 'email'
+  params: {
+    communicationServiceName: communicationServiceName
+    emailServiceName: emailServiceName
+    managedIdentityPrincipalId: identity.outputs.principalId
+    tags: tags
+  }
+}
+
+// Step 8: Scheduled ETL job (Container Apps Job) — KEV + NVD refresh + results email.
 // Depends on rbac so the identity can pull from ACR and read Key Vault secrets.
 module etlJob 'modules/etl-job.bicep' = {
   name: 'etlJob'
@@ -116,9 +132,13 @@ module etlJob 'modules/etl-job.bicep' = {
     managedEnvironmentName: managedEnvironmentName
     jobName: etlJobName
     identityId: identity.outputs.identityId
+    identityClientId: identity.outputs.clientId
     acrLoginServer: acr.outputs.loginServer
     keyVaultName: keyVaultName
     cronExpression: etlCronExpression
+    acsEndpoint: email.outputs.acsEndpoint
+    acsSender: email.outputs.senderAddress
+    emailTo: etlEmailTo
     tags: tags
   }
 }
@@ -127,3 +147,4 @@ output appServiceUrl string = 'https://${appService.outputs.defaultHostName}'
 output acrLoginServer string = acr.outputs.loginServer
 output keyVaultUri string = keyVault.outputs.keyVaultUri
 output etlJobName string = etlJob.outputs.jobName
+output etlEmailSender string = email.outputs.senderAddress

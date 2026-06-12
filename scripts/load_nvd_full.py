@@ -41,6 +41,7 @@ from pgvector.asyncpg import register_vector
 from pgvector.vector import Vector
 
 from config import settings
+from scripts.etl_report import LoaderReport
 from scripts.nvd_utils import (
     build_content,
     extract_affected_products,
@@ -476,7 +477,7 @@ async def _sync_window(
     return loaded
 
 
-async def incremental_sync(args) -> None:
+async def incremental_sync(since: str | None = None, skip_embeddings: bool = False) -> dict[str, int]:
     """Fetch CVEs published or modified since the last sync.
 
     Runs two phases: new CVEs (by published date) first, then modified CVEs.
@@ -494,12 +495,12 @@ async def incremental_sync(args) -> None:
 
     if not row or not row["max_modified"]:
         print("No existing records found. Run a full load first.")
-        return
+        return {"new": 0, "modified": 0, "synced": 0}
 
     now = datetime.now(UTC)
 
-    if args.since:
-        mod_high_water = datetime.fromisoformat(args.since).replace(tzinfo=UTC)
+    if since:
+        mod_high_water = datetime.fromisoformat(since).replace(tzinfo=UTC)
         pub_high_water = mod_high_water
         print(f"Overriding start date to {mod_high_water.date()} (--since)")
     else:
@@ -507,10 +508,11 @@ async def incremental_sync(args) -> None:
         pub_high_water = datetime.combine(row["max_published"], datetime.min.time(), tzinfo=UTC)
 
     openai_client = None
-    if not args.skip_embeddings:
+    if not skip_embeddings:
         openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
 
-    total_loaded = 0
+    new_loaded = 0
+    modified_loaded = 0
     started_at = time.time()
 
     async with httpx.AsyncClient(timeout=60) as session:
@@ -522,7 +524,7 @@ async def incremental_sync(args) -> None:
             start_str = window_start.strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
             end_str = window_end.strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
             print(f"Window: {window_start.date()} to {window_end.date()}")
-            total_loaded += await _sync_window(
+            new_loaded += await _sync_window(
                 session, start_str, end_str, openai_client, dsn, label="new", pub_filter=True
             )
             window_start = window_end
@@ -535,12 +537,23 @@ async def incremental_sync(args) -> None:
             start_str = window_start.strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
             end_str = window_end.strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
             print(f"Window: {window_start.date()} to {window_end.date()}")
-            total_loaded += await _sync_window(
+            modified_loaded += await _sync_window(
                 session, start_str, end_str, openai_client, dsn, label="modified", pub_filter=False
             )
             window_start = window_end
 
+    total_loaded = new_loaded + modified_loaded
     print(f"\nDone! Synced {total_loaded} CVEs in {format_elapsed(started_at)}")
+    return {"new": new_loaded, "modified": modified_loaded, "synced": total_loaded}
+
+
+async def run_incremental() -> LoaderReport:
+    """ETL-orchestrator entrypoint: plain incremental sync with a structured report."""
+    rate_info = "with API key (50 req/30s)" if NVD_API_KEY else "without API key (5 req/30s)"
+    print(f"NVD Full ETL | Rate limiting: {rate_info}")
+    counts = await incremental_sync()
+    summary = f"Synced {counts['synced']} CVEs ({counts['new']} new, {counts['modified']} modified)"
+    return LoaderReport(summary=summary, metrics=counts)
 
 
 BACKFILL_MAX_RETRIES = 5
@@ -702,7 +715,7 @@ async def main() -> None:
     if args.backfill_embeddings:
         await backfill_embeddings()
     elif args.incremental:
-        await incremental_sync(args)
+        await incremental_sync(since=args.since, skip_embeddings=args.skip_embeddings)
     else:
         print("Connecting to database...")
         dsn = settings.get_database_dsn()
