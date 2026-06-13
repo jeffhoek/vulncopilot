@@ -158,7 +158,7 @@ def oauth_callback(provider_id, token, raw_user_data, default_user):
 
 `allowed_emails` is now strictly for email addresses; `allowed_logins` is for GitHub usernames. Using separate fields avoids ambiguity when the same string (e.g. `"alice"`) could be either.
 
-**GitHub-only for PR 1.** The callback hardcodes `raw_user_data['id']` and `raw_user_data['login']`, which are GitHub-shaped. Google's payload has no `login` and keys its stable ID as `sub`, not `id` — so enabling Google without changes would `KeyError` on `['id']`. Keep PR 1 GitHub-only; if Google is added later, branch the identifier on `provider_id` (`f"github:{...}"` vs `f"google:{raw_user_data['sub']}"`) at that time. Chainlit auto-discovers the provider from `OAUTH_GITHUB_*` env vars and shows a button per configured provider.
+**GitHub-only for PR 1.** The callback hardcodes `raw_user_data['id']` and `raw_user_data['login']`, which are GitHub-shaped. Google's payload is different and has no `login`, so enabling Google without changes would fail the current allow-list/identifier logic. Keep PR 1 GitHub-only; if Google is added later, branch the identifier and allow-list fields on `provider_id` instead of assuming GitHub keys. Chainlit auto-discovers the provider from `OAUTH_GITHUB_*` env vars and shows a button per configured provider.
 
 **Testing tip:** Set `OPEN_REGISTRATION=true` first to confirm the OAuth redirect flow works before locking down the allow-list.
 
@@ -202,7 +202,7 @@ if not allowed:
     return
 ```
 
-`result.usage()` is Pydantic-AI's `RunResult.usage()` — returns a `RunUsage` whose token fields are `input_tokens` / `output_tokens` (verified against the installed `pydantic-ai 1.67.0`; the older `request_tokens` / `response_tokens` names no longer exist and would raise `AttributeError`). These names also line up 1:1 with the `input_tokens` / `output_tokens` columns in `user_usage`. Guard with `or 0` in case the model call doesn't return token counts.
+`result.usage()` is Pydantic-AI's `RunResult.usage()` — returns a `RunUsage` whose canonical token fields are `input_tokens` / `output_tokens` (verified against the installed `pydantic-ai 1.67.0`). The older `request_tokens` / `response_tokens` aliases still exist in that version but are deprecated, so use the current names and avoid deprecation warnings. These names also line up 1:1 with the `input_tokens` / `output_tokens` columns in `user_usage`. Guard with `or 0` in case the model call doesn't return token counts.
 
 **TOCTOU trade-off:** there is a window between the pre-check (Phase 1) and the atomic upsert (Phase 2) where concurrent requests from the same user could both pass the pre-check and both run the LLM. The worst case is one extra LLM call **per concurrent inflight request** at the limit boundary — if N requests arrive when a user is at `count = limit - 1`, all N pass Phase 1 before any has incremented the counter. For a typical single-browser-tab UI this is rarely more than one or two. This is far better than the previous design where *every* blocked user spent a full LLM call before being denied. The `check_and_increment` atomic upsert in Phase 2 remains the authoritative gate; the pre-check is a best-effort optimisation only.
 
@@ -282,7 +282,7 @@ APP_PASSWORD
 # OAuth — GitHub
 OAUTH_GITHUB_CLIENT_ID=
 OAUTH_GITHUB_CLIENT_SECRET=
-CHAINLIT_AUTH_SECRET=           # required for OAuth sessions — generate with: openssl rand -hex 32
+CHAINLIT_AUTH_SECRET=           # required for OAuth sessions — generate with: uv run chainlit create-secret
 # OAuth — Google (future — requires oauth_callback changes, see Step 4; not wired in PR 1)
 # OAUTH_GOOGLE_CLIENT_ID=
 # OAUTH_GOOGLE_CLIENT_SECRET=
@@ -326,7 +326,7 @@ Explain the three modes: `OPEN_REGISTRATION`, `ALLOWED_EMAILS`, `ALLOWED_EMAIL_D
 Recommended starting values based on expected LLM cost per query. E.g. at ~$0.01/query, 20 queries/day × 100 users = ~$20/day.
 
 ### Rollout Sequence
-0. Generate and set `CHAINLIT_AUTH_SECRET` (`openssl rand -hex 32`) **before** the OAuth deploy — Chainlit OAuth sessions silently fail to persist without it, the most likely "works locally, breaks on deploy" surprise.
+0. Generate and set `CHAINLIT_AUTH_SECRET` (`uv run chainlit create-secret`) **before** the OAuth deploy — Chainlit OAuth sessions silently fail to persist without it, the most likely "works locally, breaks on deploy" surprise.
 1. Apply DB schema change (zero-downtime — additive only)
 2. Deploy with `OPEN_REGISTRATION=true` and `DAILY_QUERY_LIMIT=9999` to smoke-test OAuth
 3. Confirm `/admin` dashboard is accessible
