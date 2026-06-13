@@ -104,7 +104,7 @@ daily_query_limit: int = 20
 
 # Admin Dashboard
 admin_secret: str = ""                  # HTTP Basic Auth password for /admin; set a strong random value
-# admin_logins removed — dashboard is protected by admin_secret alone (bearer token),
+# admin_logins removed — dashboard is protected by the admin_secret HTTP Basic password,
 # not per-user login checks. If per-user admin ACLs are needed in future, add them then.
 
 # Token Cost Estimation (USD per million tokens)
@@ -112,7 +112,7 @@ llm_input_cost_per_million: float = 0.80
 llm_output_cost_per_million: float = 4.00
 ```
 
-Add a module-level startup guard — an empty `admin_secret` would let `Authorization: Basic <base64 of ":">` pass, silently leaving the dashboard open. A module-level check fails the process immediately during `chainlit run app.py`, before any user can reach the app (unlike `@cl.on_chat_start`, which fires per session and would leave the dashboard exposed until the first user connects):
+For PR 3, add a module-level startup guard — an empty `admin_secret` would let `Authorization: Basic <base64 of ":">` pass, silently leaving the dashboard open. A module-level check fails the process immediately during `chainlit run app.py`, before any user can reach the app (unlike `@cl.on_chat_start`, which fires per session and would leave the dashboard exposed until the first user connects):
 
 ```python
 # In app.py, at module level (outside any handler):
