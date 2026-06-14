@@ -2,6 +2,7 @@ import os
 
 import chainlit as cl
 from chainlit.server import app as fastapi_app
+from fastapi.responses import HTMLResponse
 from openai import AsyncOpenAI
 from pydantic_ai import Agent
 
@@ -16,6 +17,7 @@ from config import settings
 from mcp_server.server import McpRouterMiddleware, set_mcp_context
 from rag.agent import Deps, rag_agent
 from rag.database import init_db
+from rag.etl_stats import get_recent_runs, render_etl_stats_html
 from rag.vector_store import PgVectorStore
 
 if os.getenv("LANGFUSE_PUBLIC_KEY"):
@@ -25,6 +27,40 @@ if os.getenv("LANGFUSE_PUBLIC_KEY"):
     Agent.instrument_all()
 
 fastapi_app.add_middleware(McpRouterMiddleware)
+
+
+@fastapi_app.get("/etl-stats", response_class=HTMLResponse)
+async def etl_stats_page() -> str:
+    """Public, always-on ETL run-history page.
+
+    Mounted directly on the FastAPI app, so it bypasses Chainlit's
+    password_auth_callback (which only gates the chat UI) and is reachable by
+    logged-out visitors. Read-only: app_readonly's SELECT is enough.
+    """
+    pool = await init_db()  # idempotent — returns the existing pool if already up
+    runs = await get_recent_runs(pool, limit=50)
+    return render_etl_stats_html(runs)
+
+
+def _prioritize_route(path: str) -> None:
+    """Move a route ahead of Chainlit's SPA catch-all so it isn't shadowed.
+
+    Chainlit registers a greedy "/{full_path:path}" route at import time. Starlette
+    matches routes in registration order, so a route appended afterwards never wins —
+    the catch-all serves the frontend instead and the client redirects to "/". Re-order
+    our route to sit just before the catch-all.
+    """
+    routes = fastapi_app.router.routes
+    ours = next(r for r in routes if getattr(r, "path", None) == path)
+    routes.remove(ours)
+    idx = next(
+        (i for i, r in enumerate(routes) if getattr(r, "path", None) == "/{full_path:path}"),
+        len(routes),
+    )
+    routes.insert(idx, ours)
+
+
+_prioritize_route("/etl-stats")
 
 
 @cl.on_app_startup
