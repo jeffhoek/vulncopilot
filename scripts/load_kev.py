@@ -66,11 +66,18 @@ async def generate_embeddings(openai_client: AsyncOpenAI, texts: list[str]) -> l
     return all_embeddings
 
 
-async def upsert_records(conn: asyncpg.Connection, vulns: list[dict], embeddings: list[list[float]]) -> None:
-    """Upsert vulnerability records into PostgreSQL."""
+async def upsert_records(conn: asyncpg.Connection, vulns: list[dict], embeddings: list[list[float]]) -> dict[str, int]:
+    """Upsert KEV records into PostgreSQL; return {"new": int, "modified": int}.
+
+    The upsert already knows per row whether it inserted or updated — `RETURNING
+    (xmax = 0)` exposes it (xmax is 0 only on a fresh insert), so the loader can
+    report a real new/modified delta instead of just re-counting the full catalog.
+    """
+    new_count = 0
+    modified_count = 0
     for i, (vuln, emb) in enumerate(zip(vulns, embeddings, strict=True)):
         cwes = vuln.get("cwes") or []
-        await conn.execute(
+        inserted = await conn.fetchval(
             """
             INSERT INTO kev_vulnerabilities (
                 cve_id, vendor_project, product, vulnerability_name,
@@ -91,6 +98,7 @@ async def upsert_records(conn: asyncpg.Connection, vulns: list[dict], embeddings
                 cwes = EXCLUDED.cwes,
                 content = EXCLUDED.content,
                 embedding = EXCLUDED.embedding
+            RETURNING (xmax = 0) AS inserted
             """,
             vuln.get("cveID"),
             vuln.get("vendorProject"),
@@ -106,10 +114,15 @@ async def upsert_records(conn: asyncpg.Connection, vulns: list[dict], embeddings
             build_content(vuln),
             np.array(emb, dtype=np.float32),
         )
+        if inserted:
+            new_count += 1
+        else:
+            modified_count += 1
         if (i + 1) % 500 == 0:
             print(f"  Upserted {i + 1}/{len(vulns)}")
 
-    print(f"  Upserted {len(vulns)}/{len(vulns)} total")
+    print(f"  Upserted {len(vulns)}/{len(vulns)} total ({new_count} new, {modified_count} modified)")
+    return {"new": new_count, "modified": modified_count}
 
 
 async def run() -> LoaderReport:
@@ -132,12 +145,14 @@ async def run() -> LoaderReport:
     await register_vector(conn)
 
     print("Upserting records...")
-    await upsert_records(conn, vulns, embeddings)
+    counts = await upsert_records(conn, vulns, embeddings)
     await conn.close()
 
-    print(f"Done! Loaded {len(vulns)} KEV records.")
+    new, modified = counts["new"], counts["modified"]
+    print(f"Done! Loaded {len(vulns)} KEV records ({new} new, {modified} modified).")
     return LoaderReport(
-        summary=f"Loaded {len(vulns)} KEV records", metrics={"fetched": len(vulns), "loaded": len(vulns)}
+        summary=f"Loaded {len(vulns)} KEV records ({new} new, {modified} modified)",
+        metrics={"fetched": len(vulns), "new": new, "modified": modified, "loaded": len(vulns)},
     )
 
 
