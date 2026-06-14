@@ -121,6 +121,40 @@ Notes:
 
 ---
 
+## PR 1.5 — KEV loader reports new/modified counts
+
+**Why this lands at rollout (not later):** trend *display* is deferrable, but the underlying delta is
+**not backfillable**. NVD already reports `{new, modified, synced}`
+([`scripts/load_nvd_full.py`](../scripts/load_nvd_full.py)), but KEV reports only `{fetched, loaded}`
+where `loaded` is the full catalog size re-upserted every run
+([`scripts/load_kev.py`](../scripts/load_kev.py)) — not a delta. A series of KEV *totals* can't be
+turned into "new this week" after the fact: the total only grows, modified entries don't move it, and
+diffing consecutive totals conflates additions with the occasional removal. So if KEV doesn't emit a
+real `new` count from day one, KEV trends have a permanent blind spot for all pre-change history, while
+NVD trends work immediately. Capturing it now is cheap; reconstructing it later is impossible.
+
+**File:** [`scripts/load_kev.py`](../scripts/load_kev.py)
+
+The upsert already does `ON CONFLICT (cve_id) DO UPDATE`, so Postgres knows insert-vs-update per row —
+the loader just discards it. Capture it:
+
+- Add `RETURNING (xmax = 0) AS inserted` to the upsert (`xmax = 0` marks a fresh insert vs. an update),
+  and count `new` / `modified` from the returned rows. (If the upsert is batched via a temp table like
+  NVD's, count inserts there instead.)
+- Return `LoaderReport(summary=..., metrics={"fetched": ..., "new": ..., "modified": ..., "loaded": ...})`
+  using the **same `new`/`modified` keys as NVD** so later aggregation is uniform across loaders.
+- Bonus: the results email gains the new/modified breakdown for KEV too
+  (`Loaded 1619 KEV records (N new, M modified)`).
+
+No change to `etl_runs` — the JSONB `results` column absorbs the richer metrics automatically. Ships
+independently; can land before or after PR 1, but should land **before the table starts accumulating
+rows you care about for trends.**
+
+**Tests:** `run()` reports correct `new`/`modified` on a feed with a mix of brand-new and
+already-present CVE IDs.
+
+---
+
 ## PR 2 — Public stats page
 
 **Design driver:** stats must be visible to **everyone, including logged-out visitors** (Decision 1).
@@ -202,9 +236,24 @@ async def etl_stats_page() -> str:
 
 ---
 
+## Future enhancement — trends over time (deferred)
+
+Aggregating runs into day/week/month/year rollups (e.g. "new CVEs added this week") is an **explicit
+later enhancement**, not part of the initial rollout. It needs **no schema change**: `etl_runs` already
+stores `run_at` + per-loader `metrics` as JSONB, so rollups are read-time queries
+(`GROUP BY date_trunc('week', run_at)`, summing `metrics->>'new'` across rows). This is the payoff of
+persisting structured `results` rather than the rendered email text.
+
+The only prerequisite is that the per-run deltas are captured correctly from the start — which is
+exactly what **PR 1.5** ensures for KEV. Once that's in place, the trend view can be built any time and
+will have complete history to draw on.
+
+---
+
 ## Effort estimate
 
 - **PR 1:** ~1–2 hours, mostly mechanical (schema + insert + grants + tests).
+- **PR 1.5:** ~1–2 hours (KEV insert/update counting + test); independent of PR 1.
 - **PR 2:** ~half a day, almost entirely in the public route + HTML template; the query is trivial.
 
 Overall **low risk, moderate effort** — the backend is a layup; the only real work is the public stats
