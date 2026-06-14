@@ -128,7 +128,8 @@ cot = "full"
 
 # Specify a JavaScript file that can be used to customize the user interface.
 # The JavaScript file can be served from the public directory.
-# custom_js = "/public/test.js"
+# Adds an always-visible link to the public /etl-stats page (see public/etl-stats-link.js).
+custom_js = "/public/etl-stats-link.js"
 
 # The style of alert boxes. Can be "classic" or "modern".
 alert_style = "classic"
