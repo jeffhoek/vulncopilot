@@ -1,4 +1,6 @@
-from scripts.run_etl import _fmt_duration, build_email, run_pipeline
+import json
+
+from scripts.run_etl import _fmt_duration, build_email, record_run, run_pipeline
 
 STEPS = [("step-a", "m:a"), ("step-b", "m:b"), ("step-c", "m:c")]
 
@@ -59,6 +61,66 @@ def test_build_email_failed_without_error_message_falls_back():
     _, body = build_email([_result("b", ok=False)], total_elapsed=1.0)
 
     assert "[FAIL] b (0m01s) — failed" in body
+
+
+class _FakeConn:
+    """Captures the INSERT and lets tests assert on the args asyncpg received."""
+
+    def __init__(self, calls):
+        self._calls = calls
+
+    async def execute(self, sql, *args):
+        self._calls.append((sql, args))
+
+    async def close(self):
+        pass
+
+
+def _patch_connect(monkeypatch, conn):
+    import asyncpg
+
+    async def fake_connect(*args, **kwargs):
+        return conn
+
+    monkeypatch.setattr(asyncpg, "connect", fake_connect)
+
+
+def test_record_run_inserts_success_status(monkeypatch):
+    calls = []
+    _patch_connect(monkeypatch, _FakeConn(calls))
+
+    results = [_result("a", ok=True, summary="ok"), _result("b", ok=True, summary="ok")]
+    record_run(results, total_elapsed=12.345)
+
+    assert len(calls) == 1
+    _sql, args = calls[0]
+    status, total_elapsed, results_json = args
+    assert status == "SUCCESS"
+    assert total_elapsed == 12.35  # rounded to 2 dp
+    assert json.loads(results_json) == results
+
+
+def test_record_run_marks_failed_when_any_loader_fails(monkeypatch):
+    calls = []
+    _patch_connect(monkeypatch, _FakeConn(calls))
+
+    record_run([_result("a", ok=True), _result("b", ok=False, error="boom")], total_elapsed=1.0)
+
+    assert calls[0][1][0] == "FAILED"
+
+
+def test_record_run_swallows_db_errors(monkeypatch, capsys):
+    """Best-effort contract: a DB error must not propagate or change the exit code."""
+    import asyncpg
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(asyncpg, "connect", boom)
+
+    record_run([_result("a", ok=True)], total_elapsed=1.0)  # must not raise
+
+    assert "failed to record ETL run" in capsys.readouterr().out
 
 
 def test_fmt_duration():

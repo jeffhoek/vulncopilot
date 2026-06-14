@@ -68,6 +68,16 @@ CREATE TABLE IF NOT EXISTS cwe_definitions (
     description TEXT,
     url         TEXT
 );
+
+CREATE TABLE IF NOT EXISTS etl_runs (
+    id            SERIAL PRIMARY KEY,
+    run_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    status        VARCHAR(10) NOT NULL,        -- SUCCESS | FAILED
+    total_elapsed NUMERIC(8,2) NOT NULL,       -- seconds
+    results       JSONB        NOT NULL        -- per-loader list: label, ok, elapsed, summary, metrics, error
+);
+
+CREATE INDEX IF NOT EXISTS etl_runs_run_at_idx ON etl_runs (run_at DESC);
 """
 
 
