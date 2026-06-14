@@ -46,6 +46,7 @@ GRANT USAGE ON SCHEMA public TO app_readonly;
 GRANT SELECT ON kev_vulnerabilities TO app_readonly;
 GRANT SELECT ON nvd_vulnerabilities TO app_readonly;
 GRANT SELECT ON cwe_definitions TO app_readonly;
+GRANT SELECT ON etl_runs TO app_readonly;
 ```
 
 Only these tables are granted — no wildcard `ALL TABLES`. Any new table added later requires an explicit grant before `app_readonly` can read it. ALTER DEFAULT PRIVILEGES is an optional way to automate this for future tables:
@@ -105,6 +106,8 @@ GRANT USAGE ON SCHEMA public TO app_etl;
 GRANT SELECT, INSERT, UPDATE ON kev_vulnerabilities TO app_etl;
 GRANT SELECT, INSERT, UPDATE ON nvd_vulnerabilities TO app_etl;
 GRANT SELECT, INSERT, UPDATE ON cwe_definitions TO app_etl;
+-- etl_runs is append-only: the ETL job only ever inserts a run record.
+GRANT INSERT ON etl_runs TO app_etl;
 ```
 
 `DELETE` is intentionally excluded. The ETL scripts use upserts (`INSERT ... ON CONFLICT DO UPDATE`), so DELETE is never needed. A compromised ETL credential cannot wipe vulnerability data.
@@ -118,6 +121,7 @@ The `id` serial columns require sequence access for INSERTs. `cwe_definitions` u
 ```sql
 GRANT USAGE ON SEQUENCE kev_vulnerabilities_id_seq TO app_etl;
 GRANT USAGE ON SEQUENCE nvd_vulnerabilities_id_seq TO app_etl;
+GRANT USAGE, SELECT ON SEQUENCE etl_runs_id_seq TO app_etl;
 ```
 
 ### Step 11 — Schema setup remains admin-only
@@ -168,7 +172,7 @@ Run these checks in the Supabase SQL Editor:
 -- Confirm grants for both roles
 SELECT grantee, table_name, privilege_type
 FROM information_schema.role_table_grants
-WHERE table_name IN ('kev_vulnerabilities', 'nvd_vulnerabilities', 'cwe_definitions')
+WHERE table_name IN ('kev_vulnerabilities', 'nvd_vulnerabilities', 'cwe_definitions', 'etl_runs')
   AND grantee IN ('app_readonly', 'app_etl')
 ORDER BY grantee, table_name, privilege_type;
 
@@ -207,6 +211,7 @@ To revoke a role entirely if credentials are compromised:
 REVOKE ALL ON kev_vulnerabilities FROM app_readonly;
 REVOKE ALL ON nvd_vulnerabilities FROM app_readonly;
 REVOKE ALL ON cwe_definitions FROM app_readonly;
+REVOKE ALL ON etl_runs FROM app_readonly;
 REVOKE USAGE ON SCHEMA public FROM app_readonly;
 REVOKE CONNECT ON DATABASE postgres FROM app_readonly;
 DROP ROLE app_readonly;
@@ -214,8 +219,10 @@ DROP ROLE app_readonly;
 REVOKE ALL ON kev_vulnerabilities FROM app_etl;
 REVOKE ALL ON nvd_vulnerabilities FROM app_etl;
 REVOKE ALL ON cwe_definitions FROM app_etl;
+REVOKE ALL ON etl_runs FROM app_etl;
 REVOKE ALL ON SEQUENCE kev_vulnerabilities_id_seq FROM app_etl;
 REVOKE ALL ON SEQUENCE nvd_vulnerabilities_id_seq FROM app_etl;
+REVOKE ALL ON SEQUENCE etl_runs_id_seq FROM app_etl;
 REVOKE USAGE ON SCHEMA public FROM app_etl;
 REVOKE CONNECT ON DATABASE postgres FROM app_etl;
 DROP ROLE app_etl;

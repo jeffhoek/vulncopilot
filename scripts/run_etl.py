@@ -24,6 +24,7 @@ Env:
 import asyncio
 import contextlib
 import importlib
+import json
 import os
 import sys
 import time
@@ -130,6 +131,38 @@ def send_email(subject: str, body: str) -> None:
         print(f"WARNING: failed to send results email: {exc}")
 
 
+def record_run(results: list[dict], total_elapsed: float) -> None:
+    """Persist the run to etl_runs (best-effort; never masks the ETL result).
+
+    Mirrors send_email()'s contract: any failure is logged and swallowed so a DB
+    error can't change the process exit code — the ETL outcome stays authoritative.
+    The write is unconditional (no env flag): wherever the ETL runs the loaders
+    already need a write-capable DSN, so there's no skip gap to gate.
+    """
+    status = "SUCCESS" if all(r["ok"] for r in results) else "FAILED"
+    try:
+        import asyncpg
+
+        from config import settings
+
+        async def _insert():
+            conn = await asyncpg.connect(dsn=settings.get_database_dsn())
+            try:
+                await conn.execute(
+                    "INSERT INTO etl_runs (status, total_elapsed, results) VALUES ($1, $2, $3::jsonb)",
+                    status,
+                    round(total_elapsed, 2),
+                    json.dumps(results),
+                )
+            finally:
+                await conn.close()
+
+        asyncio.run(_insert())
+        print("ETL run recorded to etl_runs.")
+    except Exception as exc:  # never let a DB error mask the ETL result
+        print(f"WARNING: failed to record ETL run: {exc}")
+
+
 def main() -> int:
     # Line-buffer stdout so loader logs stream live to the job log (not block-buffered).
     with contextlib.suppress(AttributeError, ValueError):
@@ -142,6 +175,7 @@ def main() -> int:
     subject, body = build_email(results, total_elapsed)
     print(f"\n{subject}\n{body}")
     send_email(subject, body)
+    record_run(results, total_elapsed)
 
     return 0 if results and all(r["ok"] for r in results) else 1
 
