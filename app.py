@@ -1,3 +1,4 @@
+import logging
 import os
 
 import chainlit as cl
@@ -25,6 +26,8 @@ if os.getenv("LANGFUSE_PUBLIC_KEY"):
 
     get_client()
     Agent.instrument_all()
+
+logger = logging.getLogger(__name__)
 
 fastapi_app.add_middleware(McpRouterMiddleware)
 
@@ -71,18 +74,27 @@ async def on_app_startup() -> None:
     set_mcp_context(pool, openai_client)
 
 
-@cl.password_auth_callback
-def auth_callback(username: str, password: str):
-    expected_username = os.getenv("APP_USERNAME", "admin")
-    expected_password = os.getenv("APP_PASSWORD")
+@cl.oauth_callback
+def oauth_callback(provider_id, token, raw_user_data, default_user):
+    email = raw_user_data.get("email", "")
+    login = raw_user_data.get("login", "")  # GitHub username (mutable — for allow-list matching only)
+    user_id = f"github:{raw_user_data['id']}"  # stable numeric ID — never changes on rename
 
-    if not expected_password:
-        return None
+    if settings.open_registration:
+        default_user.identifier = user_id
+        return default_user
+    if email and email in settings.allowed_emails:
+        default_user.identifier = user_id
+        return default_user
+    if email and any(email.endswith(f"@{d}") for d in settings.allowed_email_domains):
+        default_user.identifier = user_id
+        return default_user
+    if login and login in settings.allowed_logins:
+        default_user.identifier = user_id
+        return default_user
 
-    if username == expected_username and password == expected_password:
-        return cl.User(identifier=username)
-
-    return None
+    logger.warning("OAuth denied: provider=%s login=%s email=%s", provider_id, login, email)
+    return None  # deny
 
 
 def _quick_query_actions() -> list[cl.Action]:

@@ -88,6 +88,19 @@ class Settings(BaseSettings):
         "before querying the database."
     )
 
+    # OAuth
+    oauth_github_client_id: str | None = None
+    oauth_github_client_secret: str | None = None
+    # oauth_google_client_id / oauth_google_client_secret (optional alternative — see Step 4)
+
+    # Authorization
+    # pydantic-settings parses list[str] env vars as JSON arrays (e.g. ALLOWED_EMAILS=["a@x.com"]),
+    # the same convention as the existing ACTION_BUTTONS field — not comma-separated.
+    allowed_email_domains: list[str] = []  # e.g. ["mycompany.com"]
+    allowed_emails: list[str] = []  # explicit email addresses only
+    allowed_logins: list[str] = []  # GitHub usernames (login field)
+    open_registration: bool = False  # True = any OAuth user allowed
+
     # MCP Server
     mcp_api_key: str | None = None
 
