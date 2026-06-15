@@ -21,6 +21,12 @@ param pipelineServicePrincipalObjectId string
 @description('Enable Logfire observability (requires logfire-token in Key Vault)')
 param logfireEnabled bool = false
 
+@description('Allow any GitHub account to log in. Keep false in prod until rate limiting (PR 2) lands.')
+param openRegistration bool = false
+
+@description('JSON array of allowed GitHub usernames, e.g. \'["jeffhoek"]\'.')
+param allowedLogins string = '[]'
+
 @description('Cron schedule (UTC) for the ETL refresh job. Default: Mondays 06:00 UTC.')
 param etlCronExpression string = '0 6 * * 1'
 
@@ -85,6 +91,8 @@ module appService 'modules/app-service.bicep' = {
     acrLoginServer: acr.outputs.loginServer
     keyVaultName: keyVaultName
     logfireEnabled: logfireEnabled
+    openRegistration: openRegistration
+    allowedLogins: allowedLogins
     tags: tags
   }
 }

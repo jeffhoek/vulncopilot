@@ -4,6 +4,7 @@ A RAG chatbot built with Pydantic AI and Chainlit that indexes CISA KEV and NIST
 
 ## Docs
 
+- [Public access setup (OAuth)](docs/public-access-setup.md)
 - [Data loading (ETL)](docs/data-loading.md)
 - [NVD integration](docs/nvd-integration.md)
 - [CWE integration](docs/cwe-integration.md)

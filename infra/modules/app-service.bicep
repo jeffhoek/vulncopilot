@@ -7,6 +7,10 @@ param identityClientId string
 param acrLoginServer string
 param keyVaultName string
 param logfireEnabled bool = false
+// Authorization for GitHub OAuth login (see docs/public-access-setup.md).
+// Keep locked to your own login until rate limiting (PR 2) lands.
+param openRegistration bool = false
+param allowedLogins string = '[]' // JSON array, e.g. '["jeffhoek"]'
 param tags object = {}
 
 var imageRef = '${acrLoginServer}/chainlit-pydanticai-rag:latest'
@@ -122,8 +126,12 @@ resource appService 'Microsoft.Web/sites@2023-12-01' = {
           value: identityClientId
         }
         {
-          name: 'APP_USERNAME'
-          value: 'admin'
+          name: 'OPEN_REGISTRATION'
+          value: string(openRegistration)
+        }
+        {
+          name: 'ALLOWED_LOGINS'
+          value: allowedLogins
         }
         {
           name: 'LLM_MODEL'
@@ -169,8 +177,14 @@ resource appService 'Microsoft.Web/sites@2023-12-01' = {
           value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=openai-api-key)'
         }
         {
-          name: 'APP_PASSWORD'
-          value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=app-password)'
+          // GitHub OAuth App client ID. Not strictly secret (it appears in the
+          // redirect URL), but kept in Key Vault to keep the deploy flow uniform.
+          name: 'OAUTH_GITHUB_CLIENT_ID'
+          value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=oauth-github-client-id)'
+        }
+        {
+          name: 'OAUTH_GITHUB_CLIENT_SECRET'
+          value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=oauth-github-client-secret)'
         }
         {
           name: 'CHAINLIT_AUTH_SECRET'
