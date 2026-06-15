@@ -2,6 +2,9 @@ import os
 
 # Must be set before any project module is imported so Settings() validation passes.
 os.environ.setdefault("OPENAI_API_KEY", "sk-test-placeholder")
+# Importing app.py constructs the pydantic-ai Agent, which resolves the Anthropic
+# provider and requires this key even though tests never call the model.
+os.environ.setdefault("ANTHROPIC_API_KEY", "sk-test-placeholder")
 
 from unittest.mock import AsyncMock, MagicMock
 
