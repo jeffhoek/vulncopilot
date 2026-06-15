@@ -214,9 +214,19 @@ az role assignment create \
 
 ### 4.1 Set the secrets
 
+> **Create the GitHub OAuth App first.** The app authenticates users with GitHub
+> OAuth (see [docs/public-access-setup.md](public-access-setup.md)). Register an
+> OAuth App at github.com/settings/developers with the **Authorization callback
+> URL** set to your App Service URL plus Chainlit's fixed callback path:
+> `https://app-chainlit-rag-dev.azurewebsites.net/auth/oauth/github/callback`.
+> Use its Client ID / Client Secret for `OAUTH_GITHUB_CLIENT_ID` /
+> `OAUTH_GITHUB_CLIENT_SECRET` below. Authorization is locked to `ALLOWED_LOGINS`
+> (default `["jeffhoek"]`, set in `parameters.dev.bicepparam`); the App Service is
+> already HTTPS-only (`httpsOnly: true`), which OAuth requires.
+
 Use the bash `for` loop with `read` shell built-in to securely enter the env vars:
 ```bash
-for var in ANTHROPIC_API_KEY OPENAI_API_KEY APP_PASSWORD CHAINLIT_AUTH_SECRET PG_DATABASE_URL PG_DATABASE_URL_READONLY MCP_API_KEY LOGFIRE_TOKEN NVD_API_KEY; do
+for var in ANTHROPIC_API_KEY OPENAI_API_KEY OAUTH_GITHUB_CLIENT_ID OAUTH_GITHUB_CLIENT_SECRET CHAINLIT_AUTH_SECRET PG_DATABASE_URL PG_DATABASE_URL_READONLY MCP_API_KEY LOGFIRE_TOKEN NVD_API_KEY; do
   echo "$var" && read -rs $var
 done
 ```
@@ -242,8 +252,13 @@ az keyvault secret set \
 
 az keyvault secret set \
   --vault-name kv-chainlit-rag-dev \
-  --name app-password \
-  --value "$APP_PASSWORD"
+  --name oauth-github-client-id \
+  --value "$OAUTH_GITHUB_CLIENT_ID"
+
+az keyvault secret set \
+  --vault-name kv-chainlit-rag-dev \
+  --name oauth-github-client-secret \
+  --value "$OAUTH_GITHUB_CLIENT_SECRET"
 
 az keyvault secret set \
   --vault-name kv-chainlit-rag-dev \
