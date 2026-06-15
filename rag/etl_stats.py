@@ -80,8 +80,9 @@ _TEMPLATE = _env.from_string(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <!-- Refresh an open tab so freshly-loaded data shows up after each ETL run. -->
-  <meta http-equiv="refresh" content="300">
+  <!-- Reload an open tab periodically so a new ETL run eventually shows up without
+       a manual refresh. Kept well above the ETL cadence (currently twice daily). -->
+  <meta http-equiv="refresh" content="1800">
   <title>ETL run history</title>
   <style>
     :root { color-scheme: light dark; }
@@ -106,7 +107,7 @@ _TEMPLATE = _env.from_string(
 </head>
 <body>
   <h1>ETL run history</h1>
-  <p class="sub">CISA KEV &amp; NIST NVD refresh — newest first. Auto-refreshes every 5 min.</p>
+  <p class="sub">CISA KEV &amp; NIST NVD refresh — newest first.</p>
   {% if runs %}
   <div class="scroll">
     <table>
