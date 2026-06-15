@@ -191,6 +191,13 @@ resource appService 'Microsoft.Web/sites@2023-12-01' = {
           value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=chainlit-auth-secret)'
         }
         {
+          // Canonical public URL. App Service terminates TLS at the front end and
+          // forwards plain HTTP to the container, so without this Chainlit builds
+          // the OAuth redirect_uri as http://… and GitHub rejects the mismatch.
+          name: 'CHAINLIT_URL'
+          value: 'https://${appServiceName}.azurewebsites.net'
+        }
+        {
           name: 'MCP_API_KEY'
           value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=mcp-api-key)'
         }

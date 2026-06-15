@@ -223,6 +223,14 @@ az role assignment create \
 > `OAUTH_GITHUB_CLIENT_SECRET` below. Authorization is locked to `ALLOWED_LOGINS`
 > (default `["jeffhoek"]`, set in `parameters.dev.bicepparam`); the App Service is
 > already HTTPS-only (`httpsOnly: true`), which OAuth requires.
+>
+> **Proxy gotcha — `CHAINLIT_URL` is required.** App Service terminates TLS at the
+> front end and forwards plain HTTP to the container, so Chainlit otherwise builds
+> the OAuth `redirect_uri` as `http://…` and GitHub rejects it with *"The
+> redirect_uri is not associated with this application."* The bicep sets
+> `CHAINLIT_URL=https://<appServiceName>.azurewebsites.net` to fix this. If you see
+> that error, confirm the setting is present:
+> `az webapp config appsettings list -g rg-chainlit-rag-dev -n app-chainlit-rag-dev --query "[?name=='CHAINLIT_URL']"`.
 
 Use the bash `for` loop with `read` shell built-in to securely enter the env vars:
 ```bash
