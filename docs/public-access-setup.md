@@ -40,6 +40,8 @@ and `http://localhost:8000/auth/oauth/github/callback`. GitHub allows
 | `ALLOWED_EMAIL_DOMAINS` | `[]` | JSON array of email domains (no `@`), e.g. `["mycompany.com"]`. |
 | `ALLOWED_LOGINS` | `[]` | JSON array of GitHub usernames, e.g. `["jeffhoek"]`. |
 | `DAILY_QUERY_LIMIT` | `20` | Max queries per user per UTC day. |
+| `ADMIN_DAILY_QUERY_LIMIT` | `100000` | Elevated cap for identifiers in `ADMIN_USER_IDENTIFIERS`. |
+| `ADMIN_USER_IDENTIFIERS` | `[]` | JSON array of GitHub identifiers, e.g. `["github:12345678"]`, that get the elevated cap. |
 
 > **List values are JSON arrays, not comma-separated.** A bare
 > `ALLOWED_LOGINS=jeff,alice` raises a `SettingsError` on startup. Use
@@ -88,6 +90,15 @@ The login is used only for allow-list matching. Use
 Each query is capped per user per UTC day via `DAILY_QUERY_LIMIT` (default 20).
 Usage is tracked in the `user_usage` table (one row per user per day), keyed by the
 stable numeric GitHub identifier.
+
+**Elevated cap for admins.** Identifiers listed in `ADMIN_USER_IDENTIFIERS` get
+`ADMIN_DAILY_QUERY_LIMIT` (default 100000) instead of `DAILY_QUERY_LIMIT`, so the
+standard cap applies to everyone else while trusted users run effectively
+unthrottled. Look up your identifier in the `user_usage` table after a query
+(`SELECT user_identifier FROM user_usage;`) and set, e.g.,
+`ADMIN_USER_IDENTIFIERS=["github:12345678"]`. The effective limit is resolved per
+request by `_limit_for()` in `app.py` and used by both the pre-check and the atomic
+record, so admins are never blocked at either phase.
 
 Both the `on_message` and quick-query handlers use a two-phase pattern (factored
 into `enforce_daily_limit()` / `record_usage()` in `app.py`):

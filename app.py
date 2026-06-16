@@ -102,10 +102,15 @@ def _quick_query_actions() -> list[cl.Action]:
     return [cl.Action(name="quick_query", label=label, payload={"query": label}) for label in settings.action_buttons]
 
 
-def _limit_message() -> cl.Message:
-    return cl.Message(
-        content=f"You've reached your daily limit of {settings.daily_query_limit} queries. Try again tomorrow."
-    )
+def _limit_for(user_id: str) -> int:
+    """Effective daily query limit for a user — elevated for listed admins."""
+    if user_id in settings.admin_user_identifiers:
+        return settings.admin_daily_query_limit
+    return settings.daily_query_limit
+
+
+def _limit_message(limit: int) -> cl.Message:
+    return cl.Message(content=f"You've reached your daily limit of {limit} queries. Try again tomorrow.")
 
 
 async def enforce_daily_limit() -> bool:
@@ -116,13 +121,14 @@ async def enforce_daily_limit() -> bool:
     best-effort only — record_usage() below is the authoritative gate.
     """
     user_id = cl.user_session.get("user").identifier
+    limit = _limit_for(user_id)
     pool = get_pool()
     row = await pool.fetchrow(
         "SELECT query_count FROM user_usage WHERE user_identifier = $1 AND query_date = CURRENT_DATE",
         user_id,
     )
-    if row and row["query_count"] >= settings.daily_query_limit:
-        await _limit_message().send()
+    if row and row["query_count"] >= limit:
+        await _limit_message(limit).send()
         return False
     return True
 
@@ -135,17 +141,18 @@ async def record_usage(result) -> bool:
     and returns False so the caller withholds the answer.
     """
     user_id = cl.user_session.get("user").identifier
+    limit = _limit_for(user_id)
     usage = result.usage()
     allowed, new_count = await check_and_increment(
         get_pool(),
         user_id,
-        settings.daily_query_limit,
+        limit,
         usage.input_tokens or 0,
         usage.output_tokens or 0,
     )
     if not allowed:
-        logger.warning("Rate limit hit: user=%s count=%d limit=%d", user_id, new_count, settings.daily_query_limit)
-        await _limit_message().send()
+        logger.warning("Rate limit hit: user=%s count=%d limit=%d", user_id, new_count, limit)
+        await _limit_message(limit).send()
     return allowed
 
 
