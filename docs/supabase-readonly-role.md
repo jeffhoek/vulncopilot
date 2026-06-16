@@ -209,16 +209,38 @@ PG_DATABASE_URL=postgresql://app_etl.<project-ref>:<password>@aws-0-<region>.poo
 
 ## Part 5 — Verify
 
-Run these checks in the Supabase SQL Editor:
+### Preferred: inspect grants directly (no `SET ROLE`)
+
+> **Supabase gotcha — `SET ROLE` is blocked in the SQL Editor.** The editor runs
+> as a restricted `postgres` role that is neither a superuser nor a member of
+> `app_readonly` / `app_etl`, so `SET ROLE app_readonly` fails with
+> `ERROR: 42501: permission denied to set role "app_readonly"`. This is a sandbox
+> limitation, **not** a problem with your grants — the `GRANT` statements
+> themselves never need `SET ROLE`. Verify by reading the catalog instead:
 
 ```sql
--- Confirm grants for both roles
+-- Confirm grants for both roles (expect SELECT on the vuln tables for app_readonly,
+-- SELECT/INSERT/UPDATE on user_usage for app_readonly, and SELECT/INSERT/UPDATE on
+-- the vuln tables for app_etl).
 SELECT grantee, table_name, privilege_type
 FROM information_schema.role_table_grants
 WHERE table_name IN ('kev_vulnerabilities', 'nvd_vulnerabilities', 'cwe_definitions', 'etl_runs', 'user_usage')
   AND grantee IN ('app_readonly', 'app_etl')
 ORDER BY grantee, table_name, privilege_type;
+```
 
+The authoritative end-to-end check is simply to run the app (below): if a query
+records a `user_usage` row, the live `app_readonly` connection can write.
+
+### Optional: impersonation tests (`SET ROLE`)
+
+These prove the *negative* cases (a role **cannot** do something). They require a
+connection that may impersonate the roles — i.e. **not** the Supabase SQL Editor.
+Use a direct `psql` session as a role with membership, or first grant your editor
+role membership: `GRANT app_readonly TO postgres;` (and `GRANT app_etl TO postgres;`),
+reversible with `REVOKE`.
+
+```sql
 -- Confirm app_readonly CAN write its own usage rows (expect: INSERT 0 1)
 SET ROLE app_readonly;
 INSERT INTO user_usage (user_identifier) VALUES ('github:grant-check')
@@ -227,7 +249,7 @@ RESET ROLE;
 -- Clean up the probe row as admin (app_readonly has no DELETE):
 DELETE FROM user_usage WHERE user_identifier = 'github:grant-check';
 
--- Confirm app_readonly cannot write (expect: ERROR: permission denied)
+-- Confirm app_readonly cannot write vuln data (expect: ERROR: permission denied)
 SET ROLE app_readonly;
 INSERT INTO kev_vulnerabilities (cve_id) VALUES ('TEST-WRITE-CHECK');
 RESET ROLE;
