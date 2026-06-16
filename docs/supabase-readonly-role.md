@@ -81,6 +81,49 @@ CREATE POLICY "app_etl_write" ON cwe_definitions
   FOR ALL TO app_etl USING (true) WITH CHECK (true);
 ```
 
+### Step 6.5 — Grant write on `user_usage` (rate limiting)
+
+The per-user daily rate limiter (see [public-access-setup.md](public-access-setup.md))
+records each query in the `user_usage` table. Unlike the vulnerability tables, the
+**live app writes to this one** — `check_and_increment` runs an
+`INSERT ... ON CONFLICT DO UPDATE`. This is a deliberate, narrowly scoped exception
+to the read-only model: `app_readonly` can write its own usage rows but still cannot
+touch any vulnerability data.
+
+The table itself is created by the admin role (DDL is admin-only — see Step 11). It
+is part of `SCHEMA_SQL` in `rag/database.py`, so it is created automatically wherever
+schema setup runs with the admin connection; to create it by hand:
+
+```sql
+-- Run as the admin (postgres) role:
+CREATE TABLE IF NOT EXISTS user_usage (
+    id              SERIAL PRIMARY KEY,
+    user_identifier TEXT     NOT NULL,
+    query_date      DATE     NOT NULL DEFAULT CURRENT_DATE,
+    query_count     INTEGER  NOT NULL DEFAULT 0,
+    input_tokens    INTEGER  NOT NULL DEFAULT 0,
+    output_tokens   INTEGER  NOT NULL DEFAULT 0,
+    UNIQUE (user_identifier, query_date)
+);
+CREATE INDEX IF NOT EXISTS user_usage_date_idx ON user_usage (query_date DESC);
+```
+
+Then grant the live app read **and** write on it, plus its serial sequence:
+
+```sql
+GRANT SELECT, INSERT, UPDATE ON user_usage TO app_readonly;
+GRANT USAGE, SELECT ON SEQUENCE user_usage_id_seq TO app_readonly;
+```
+
+> No `DELETE` is granted — rows are only ever inserted or incremented. `app_etl`
+> needs no access to `user_usage`; the ETL job never reads or writes it.
+
+> **If RLS is enabled** on `user_usage`, add a policy so the app can write its rows:
+> ```sql
+> CREATE POLICY "app_readonly_usage" ON user_usage
+>   FOR ALL TO app_readonly USING (true) WITH CHECK (true);
+> ```
+
 ---
 
 ## Part 2 — app_etl role
@@ -172,9 +215,17 @@ Run these checks in the Supabase SQL Editor:
 -- Confirm grants for both roles
 SELECT grantee, table_name, privilege_type
 FROM information_schema.role_table_grants
-WHERE table_name IN ('kev_vulnerabilities', 'nvd_vulnerabilities', 'cwe_definitions', 'etl_runs')
+WHERE table_name IN ('kev_vulnerabilities', 'nvd_vulnerabilities', 'cwe_definitions', 'etl_runs', 'user_usage')
   AND grantee IN ('app_readonly', 'app_etl')
 ORDER BY grantee, table_name, privilege_type;
+
+-- Confirm app_readonly CAN write its own usage rows (expect: INSERT 0 1)
+SET ROLE app_readonly;
+INSERT INTO user_usage (user_identifier) VALUES ('github:grant-check')
+  ON CONFLICT (user_identifier, query_date) DO NOTHING;
+RESET ROLE;
+-- Clean up the probe row as admin (app_readonly has no DELETE):
+DELETE FROM user_usage WHERE user_identifier = 'github:grant-check';
 
 -- Confirm app_readonly cannot write (expect: ERROR: permission denied)
 SET ROLE app_readonly;
@@ -212,6 +263,8 @@ REVOKE ALL ON kev_vulnerabilities FROM app_readonly;
 REVOKE ALL ON nvd_vulnerabilities FROM app_readonly;
 REVOKE ALL ON cwe_definitions FROM app_readonly;
 REVOKE ALL ON etl_runs FROM app_readonly;
+REVOKE ALL ON user_usage FROM app_readonly;
+REVOKE ALL ON SEQUENCE user_usage_id_seq FROM app_readonly;
 REVOKE USAGE ON SCHEMA public FROM app_readonly;
 REVOKE CONNECT ON DATABASE postgres FROM app_readonly;
 DROP ROLE app_readonly;
