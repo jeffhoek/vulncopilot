@@ -1,6 +1,6 @@
 # Data Loading
 
-This guide covers populating the PostgreSQL/pgvector database with CISA KEV and NIST NVD vulnerability data. These steps apply regardless of where the database is hosted (local container, Timescale Cloud, RDS, etc.).
+This guide covers populating the PostgreSQL/pgvector database with CISA KEV, NIST NVD, and MITRE CWE vulnerability data. These steps apply regardless of where the database is hosted (local container, Timescale Cloud, RDS, etc.).
 
 ## Prerequisites
 
@@ -52,13 +52,14 @@ uv run python -c "from rag.database import init_db; import asyncio; asyncio.run(
 
 ## ETL Scripts
 
-There are three ETL scripts, each targeting a different scope:
+There are four ETL scripts, each targeting a different scope:
 
 | Script | Scope | Records | Use case |
 |---|---|---|---|
 | `scripts/load_kev.py` | CISA KEV catalog | ~1,500 | Always run first — KEV is the primary dataset |
 | `scripts/load_nvd.py` | NVD data for KEV CVEs only | ~1,500 | Enriches KEV entries with CVSS scores, severity, affected products |
 | `scripts/load_nvd_full.py` | Entire NVD database | ~280,000 | Full NVD corpus for broader vulnerability research |
+| `scripts/load_cwe.py` | MITRE CWE definitions | ~900 | Resolves opaque CWE IDs to human-readable weakness names/descriptions |
 
 ### 1. Load CISA KEV data
 
@@ -173,6 +174,16 @@ The row disappears when the build completes. On Medium with 1GB `maintenance_wor
 
 For smaller weekly syncs the index overhead is usually tolerable — skip the drop/rebuild unless upsert batches start taking several minutes.
 
+### 4. Load CWE definitions (optional)
+
+Resolves the CWE IDs stored in the `cwes` column of the KEV and NVD tables to human-readable weakness names and descriptions. Downloads MITRE's CWE list and upserts it into `cwe_definitions`:
+
+```bash
+uv run python scripts/load_cwe.py
+```
+
+No API key or authentication required. The script is idempotent — re-running pulls the latest CWE release (published 2–3 times per year) and upserts any changes. See [cwe-integration.md](cwe-integration.md) for schema and example join queries.
+
 ## NVD API Key
 
 All NVD scripts benefit from an API key, which increases the rate limit from 5 to 50 requests per 30 seconds. Set `NVD_API_KEY` in `.env`. Request a free key at https://nvd.nist.gov/developers/request-an-api-key.
@@ -183,6 +194,7 @@ All NVD scripts benefit from an API key, which increases the rate limit from 5 t
 psql "$DATABASE_URL" -c "SELECT COUNT(*) FROM kev_vulnerabilities;"
 psql "$DATABASE_URL" -c "SELECT COUNT(*) FROM nvd_vulnerabilities;"
 psql "$DATABASE_URL" -c "SELECT COUNT(*) FROM nvd_vulnerabilities WHERE embedding IS NULL;"
+psql "$DATABASE_URL" -c "SELECT COUNT(*) FROM cwe_definitions;"
 ```
 
 ## Refreshing Data
