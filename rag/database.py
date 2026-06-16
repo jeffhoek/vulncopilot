@@ -78,6 +78,20 @@ CREATE TABLE IF NOT EXISTS etl_runs (
 );
 
 CREATE INDEX IF NOT EXISTS etl_runs_run_at_idx ON etl_runs (run_at DESC);
+
+CREATE TABLE IF NOT EXISTS user_usage (
+    id              SERIAL PRIMARY KEY,
+    user_identifier TEXT     NOT NULL,
+    query_date      DATE     NOT NULL DEFAULT CURRENT_DATE,
+    query_count     INTEGER  NOT NULL DEFAULT 0,
+    input_tokens    INTEGER  NOT NULL DEFAULT 0,
+    output_tokens   INTEGER  NOT NULL DEFAULT 0,
+    UNIQUE (user_identifier, query_date)
+);
+CREATE INDEX IF NOT EXISTS user_usage_date_idx ON user_usage (query_date DESC);
+-- user_identifier-only index omitted: the UNIQUE (user_identifier, query_date) constraint
+-- already creates a B-tree on both columns with user_identifier as the leading key, which
+-- PostgreSQL can use for single-column lookups on user_identifier.
 """
 
 

@@ -17,8 +17,9 @@ if os.getenv("LOGFIRE_ENABLED", "").lower() == "true":
 from config import settings
 from mcp_server.server import McpRouterMiddleware, set_mcp_context
 from rag.agent import Deps, rag_agent
-from rag.database import init_db
+from rag.database import get_pool, init_db
 from rag.etl_stats import get_recent_runs, render_etl_stats_html
+from rag.usage import check_and_increment
 from rag.vector_store import PgVectorStore
 
 if os.getenv("LANGFUSE_PUBLIC_KEY"):
@@ -101,6 +102,53 @@ def _quick_query_actions() -> list[cl.Action]:
     return [cl.Action(name="quick_query", label=label, payload={"query": label}) for label in settings.action_buttons]
 
 
+def _limit_message() -> cl.Message:
+    return cl.Message(
+        content=f"You've reached your daily limit of {settings.daily_query_limit} queries. Try again tomorrow."
+    )
+
+
+async def enforce_daily_limit() -> bool:
+    """Phase 1 — cheap read-only pre-check shared by both handlers.
+
+    Avoids spending an LLM call on an already-blocked user. Returns True if the
+    user may proceed; otherwise sends the limit message and returns False. This is
+    best-effort only — record_usage() below is the authoritative gate.
+    """
+    user_id = cl.user_session.get("user").identifier
+    pool = get_pool()
+    row = await pool.fetchrow(
+        "SELECT query_count FROM user_usage WHERE user_identifier = $1 AND query_date = CURRENT_DATE",
+        user_id,
+    )
+    if row and row["query_count"] >= settings.daily_query_limit:
+        await _limit_message().send()
+        return False
+    return True
+
+
+async def record_usage(result) -> bool:
+    """Phase 2 — atomically record the run's token usage; report if within limit.
+
+    Returns True if the request was within the limit. On the rare over-limit case
+    (the TOCTOU race past the Phase 1 pre-check) it logs, sends the limit message,
+    and returns False so the caller withholds the answer.
+    """
+    user_id = cl.user_session.get("user").identifier
+    usage = result.usage()
+    allowed, new_count = await check_and_increment(
+        get_pool(),
+        user_id,
+        settings.daily_query_limit,
+        usage.input_tokens or 0,
+        usage.output_tokens or 0,
+    )
+    if not allowed:
+        logger.warning("Rate limit hit: user=%s count=%d limit=%d", user_id, new_count, settings.daily_query_limit)
+        await _limit_message().send()
+    return allowed
+
+
 @cl.action_callback("quick_query")
 async def on_quick_query(action: cl.Action) -> None:
     query = action.payload["query"]
@@ -108,8 +156,12 @@ async def on_quick_query(action: cl.Action) -> None:
     if deps is None:
         await cl.Message(content="Error: Knowledge base not initialized. Please refresh the page.").send()
         return
+    if not await enforce_daily_limit():
+        return
     history = cl.user_session.get("message_history", [])
     result = await rag_agent.run(query, deps=deps, message_history=history)
+    if not await record_usage(result):
+        return
     cl.user_session.set("message_history", result.all_messages()[-settings.max_history_messages :])
     await cl.Message(content=result.output, actions=_quick_query_actions()).send()
 
@@ -145,7 +197,11 @@ async def on_message(message: cl.Message) -> None:
         await cl.Message(content="Error: Knowledge base not initialized. Please refresh the page.").send()
         return
 
+    if not await enforce_daily_limit():
+        return
     history = cl.user_session.get("message_history", [])
     result = await rag_agent.run(message.content, deps=deps, message_history=history)
+    if not await record_usage(result):
+        return
     cl.user_session.set("message_history", result.all_messages()[-settings.max_history_messages :])
     await cl.Message(content=result.output, actions=_quick_query_actions()).send()

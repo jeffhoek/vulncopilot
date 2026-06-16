@@ -101,6 +101,9 @@ class Settings(BaseSettings):
     allowed_logins: list[str] = []  # GitHub usernames (login field)
     open_registration: bool = False  # True = any OAuth user allowed
 
+    # Rate Limiting
+    daily_query_limit: int = 20
+
     # MCP Server
     mcp_api_key: str | None = None
 
