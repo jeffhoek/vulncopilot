@@ -101,6 +101,11 @@ open_registration: bool = False         # True = any OAuth user allowed
 
 # Rate Limiting
 daily_query_limit: int = 20
+# Elevated cap for admin/trusted users, keyed by stable GitHub identifier
+# (e.g. ADMIN_USER_IDENTIFIERS=["github:12345678"]). Unlisted users get
+# daily_query_limit. JSON-array env var, like the allow-list fields.
+admin_daily_query_limit: int = 100000
+admin_user_identifiers: list[str] = []
 
 # Admin Dashboard
 admin_secret: str = ""                  # HTTP Basic Auth password for /admin; set a strong random value
@@ -205,6 +210,8 @@ if not allowed:
 `result.usage()` is Pydantic-AI's `RunResult.usage()` — returns a `RunUsage` whose canonical token fields are `input_tokens` / `output_tokens` (verified against the installed `pydantic-ai 1.67.0`). The older `request_tokens` / `response_tokens` aliases still exist in that version but are deprecated, so use the current names and avoid deprecation warnings. These names also line up 1:1 with the `input_tokens` / `output_tokens` columns in `user_usage`. Guard with `or 0` in case the model call doesn't return token counts.
 
 **TOCTOU trade-off:** there is a window between the pre-check (Phase 1) and the atomic upsert (Phase 2) where concurrent requests from the same user could both pass the pre-check and both run the LLM. The worst case is one extra LLM call **per concurrent inflight request** at the limit boundary — if N requests arrive when a user is at `count = limit - 1`, all N pass Phase 1 before any has incremented the counter. For a typical single-browser-tab UI this is rarely more than one or two. This is far better than the previous design where *every* blocked user spent a full LLM call before being denied. The `check_and_increment` atomic upsert in Phase 2 remains the authoritative gate; the pre-check is a best-effort optimisation only.
+
+**Per-user limit override:** the effective limit is resolved per request by a small `_limit_for(user_id)` helper rather than reading `settings.daily_query_limit` directly — identifiers in `admin_user_identifiers` get `admin_daily_query_limit`, everyone else gets `daily_query_limit`. Both phases (pre-check and `check_and_increment`) and the limit message use this resolved value, so an elevated user is never throttled at either phase. Keying on the stable `github:<id>` identifier (not the mutable login) keeps it consistent with the rest of the design and needs no extra session plumbing.
 
 ---
 
@@ -366,10 +373,10 @@ Grouped by PR (see [PR Sequence](#pr-sequence) at top). Within a PR, land steps 
 |---|---|---|
 | 1 | DB schema | `rag/database.py` |
 | 2a | `check_and_increment` only | `rag/usage.py` (new) |
-| 3b | `daily_query_limit` config field | `config.py` |
-| 5 | Rate limiting (two-phase) | `app.py` |
-| 7b | `DAILY_QUERY_LIMIT` env var | `.env.example` |
-| 8b | Rate limit guidance + limit tests | `docs/public-access-setup.md` |
+| 3b | `daily_query_limit` + admin override config fields | `config.py` |
+| 5 | Rate limiting (two-phase) + `_limit_for()` per-user override | `app.py` |
+| 7b | `DAILY_QUERY_LIMIT` + admin override env vars | `.env.example` |
+| 8b | Rate limit guidance + limit/override tests | `docs/public-access-setup.md`, `tests/unit/test_rate_limit.py` |
 
 ### PR 3 — Admin dashboard
 
