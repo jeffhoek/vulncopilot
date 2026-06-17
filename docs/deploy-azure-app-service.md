@@ -144,12 +144,15 @@ these the same way (Pipelines → Edit → Variables → New variable):
 | `ETL_EMAIL_TO` | `you@example.com` | Recipient(s) of the ETL results email (comma-separated). Empty = no email. |
 | `ADMIN_USER_IDENTIFIERS` | `["github:12345678"]` | GitHub identifiers granted the elevated rate-limit cap. **Must be valid JSON** (`[]` for none). |
 
-> Each has a safe bicep default (`''` for the email, `'[]'` for admins), so a manual
-> `az deployment` without them still succeeds. But if you *define* the pipeline
-> variable, **set a real value** — an undefined pipeline variable is passed through
-> literally (e.g. `ADMIN_USER_IDENTIFIERS=$(ADMIN_USER_IDENTIFIERS)`), which would
-> fail the app's JSON parse at startup. Define it with a valid value or don't add it
-> at all.
+> These are optional. `azure-pipelines.yml` defines a safe default for each in its
+> `variables:` block (`''` for the email, `'[]'` for admins), so leaving them unset
+> deploys cleanly. A variable you add in the UI **overrides** that default. For
+> `ADMIN_USER_IDENTIFIERS`, set valid JSON (`[]` for none) — the deploy reads the
+> value from the variable's **environment variable** (quoted), not a `$(...)` macro,
+> because a macro is substituted as literal text and bash strips the JSON's own
+> double-quotes. The app also now treats a blank value as `[]` rather than crashing,
+> so an empty UI variable is tolerated — but a non-empty *invalid* value (e.g.
+> `[github:1]` with the quotes lost) still fails fast at startup.
 
 ### 2.4 Create the Deployment Environment
 

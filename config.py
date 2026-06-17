@@ -1,4 +1,26 @@
-from pydantic_settings import BaseSettings
+import json
+from typing import Annotated
+
+from pydantic import BeforeValidator
+from pydantic_settings import BaseSettings, NoDecode
+
+
+def _decode_json_list(v: object) -> object:
+    """Parse a JSON-array env var, tolerating an empty/blank value as [].
+
+    pydantic-settings normally JSON-decodes list fields inside the settings source,
+    where a blank string (e.g. an Azure pipeline variable defined but left empty)
+    raises before any validator runs and crash-loops the app. NoDecode hands us the
+    raw string instead so we can treat blank as an empty list.
+    """
+    if isinstance(v, str):
+        s = v.strip()
+        return [] if not s else json.loads(s)
+    return v
+
+
+# JSON-array env var (e.g. ALLOWED_LOGINS=["a","b"]) that also accepts blank as [].
+JsonStrList = Annotated[list[str], NoDecode, BeforeValidator(_decode_json_list)]
 
 
 class Settings(BaseSettings):
@@ -96,9 +118,9 @@ class Settings(BaseSettings):
     # Authorization
     # pydantic-settings parses list[str] env vars as JSON arrays (e.g. ALLOWED_EMAILS=["a@x.com"]),
     # the same convention as the existing ACTION_BUTTONS field — not comma-separated.
-    allowed_email_domains: list[str] = []  # e.g. ["mycompany.com"]
-    allowed_emails: list[str] = []  # explicit email addresses only
-    allowed_logins: list[str] = []  # GitHub usernames (login field)
+    allowed_email_domains: JsonStrList = []  # e.g. ["mycompany.com"]
+    allowed_emails: JsonStrList = []  # explicit email addresses only
+    allowed_logins: JsonStrList = []  # GitHub usernames (login field)
     open_registration: bool = False  # True = any OAuth user allowed
 
     # Rate Limiting
@@ -107,13 +129,13 @@ class Settings(BaseSettings):
     # (e.g. ADMIN_USER_IDENTIFIERS=["github:12345678"]). Identifiers not listed
     # get daily_query_limit. JSON-array env var, like the allow-list fields.
     admin_daily_query_limit: int = 100000
-    admin_user_identifiers: list[str] = []
+    admin_user_identifiers: JsonStrList = []
 
     # MCP Server
     mcp_api_key: str | None = None
 
     # Action Buttons (optional)
-    action_buttons: list[str] = []
+    action_buttons: JsonStrList = []
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
