@@ -199,6 +199,13 @@ resource appService 'Microsoft.Web/sites@2023-12-01' = {
           value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=chainlit-auth-secret)'
         }
         {
+          // HTTP Basic password for the /admin dashboard. app.py fails fast at
+          // startup if this is empty, so the admin-secret Key Vault secret must
+          // exist before this reference deploys or the app crash-loops (503).
+          name: 'ADMIN_SECRET'
+          value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=admin-secret)'
+        }
+        {
           // Canonical public URL. App Service terminates TLS at the front end and
           // forwards plain HTTP to the container, so without this Chainlit builds
           // the OAuth redirect_uri as http://… and GitHub rejects the mismatch.

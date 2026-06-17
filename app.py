@@ -14,6 +14,7 @@ if os.getenv("LOGFIRE_ENABLED", "").lower() == "true":
     logfire.instrument_pydantic_ai()
     logfire.instrument_openai()
 
+from admin.dashboard import admin_dashboard
 from config import settings
 from mcp_server.server import McpRouterMiddleware, set_mcp_context
 from rag.agent import Deps, rag_agent
@@ -29,6 +30,12 @@ if os.getenv("LANGFUSE_PUBLIC_KEY"):
     Agent.instrument_all()
 
 logger = logging.getLogger(__name__)
+
+# Fail fast: an empty admin_secret would let `Authorization: Basic <base64 of ":">`
+# pass, silently leaving the /admin dashboard open. Checking at module level aborts
+# `chainlit run app.py` before any user can connect (unlike a per-session handler).
+if not settings.admin_secret:
+    raise ValueError("ADMIN_SECRET must be set to a non-empty value before starting the app")
 
 fastapi_app.add_middleware(McpRouterMiddleware)
 
@@ -65,6 +72,12 @@ def _prioritize_route(path: str) -> None:
 
 
 _prioritize_route("/etl-stats")
+
+# Read-only admin usage dashboard (HTTP Basic Auth — see admin/dashboard.py).
+# Like /etl-stats, it must sit ahead of Chainlit's "/{full_path:path}" catch-all
+# or the SPA shell is served instead.
+fastapi_app.add_api_route("/admin", admin_dashboard, methods=["GET"])
+_prioritize_route("/admin")
 
 
 @cl.on_app_startup

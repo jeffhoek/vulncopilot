@@ -295,6 +295,18 @@ az keyvault secret set \
   --name chainlit-auth-secret \
   --value "$CHAINLIT_AUTH_SECRET"
 
+# HTTP Basic password for the /admin dashboard. Required — the app refuses to
+# start (and crash-loops on 503) if ADMIN_SECRET is empty. /admin is HTTPS-only
+# but has no rate limiting, so the value must not be guessable. Use a strong
+# value you'll actually type: a 4+ ordinary-word passphrase (e.g.
+# "purple-canoe-rainy-otter", ~44+ bits) is easy to enter and well beyond online
+# brute force. For a copy-paste manager, `openssl rand -base64 18` (~24 chars) works.
+read -rs ADMIN_SECRET   # paste/type your chosen passphrase, then Enter
+az keyvault secret set \
+  --vault-name kv-chainlit-rag-dev \
+  --name admin-secret \
+  --value "$ADMIN_SECRET"
+
 az keyvault secret set \
   --vault-name kv-chainlit-rag-dev \
   --name database-url \
@@ -684,6 +696,10 @@ See [docs/mcp-server.md](mcp-server.md) for the full MCP server operational guid
 **Container startup timeout**
 - `WEBSITE_CONTAINER_START_TIME_LIMIT: 230` allows 230s; if startup still times out, check logs for DB connection errors
 - The B2 plan has `alwaysOn: true`, so cold starts only happen after a restart or deploy
+
+**App crash-loops on 503 right after deploy (`:( Application Error`)**
+- The app fails fast at startup if `ADMIN_SECRET` is empty (the `/admin` dashboard guard). Confirm the `admin-secret` Key Vault secret exists and the reference resolved: `az webapp config appsettings list -g rg-chainlit-rag-dev -n app-chainlit-rag-dev --query "[?name=='ADMIN_SECRET']"` (an empty `value` means the KV secret is missing — create it per Step 4.1, then restart).
+- Also check the JSON-array app settings (`ADMIN_USER_IDENTIFIERS`, `ALLOWED_LOGINS`, …) hold valid JSON — a malformed value (e.g. quotes stripped to `[github:1]`) aborts startup. A *blank* value is tolerated as `[]`.
 
 **Database connection fails on startup**
 - Confirm `PG_DATABASE_URL` app setting is set and the KV reference resolved (`az webapp config appsettings list`)

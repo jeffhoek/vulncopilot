@@ -9,6 +9,8 @@ os.environ.setdefault("ANTHROPIC_API_KEY", "sk-test-placeholder")
 # provider is configured. Placeholders satisfy that check; tests never hit GitHub.
 os.environ.setdefault("OAUTH_GITHUB_CLIENT_ID", "test-client-id")
 os.environ.setdefault("OAUTH_GITHUB_CLIENT_SECRET", "test-client-secret")
+# app.py refuses to import with an empty ADMIN_SECRET (the /admin startup guard).
+os.environ.setdefault("ADMIN_SECRET", "test-admin-secret")
 
 from unittest.mock import AsyncMock, MagicMock
 

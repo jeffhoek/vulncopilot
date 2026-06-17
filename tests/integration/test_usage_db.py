@@ -8,7 +8,7 @@ import uuid
 
 import pytest
 
-from rag.usage import check_and_increment
+from rag.usage import check_and_increment, get_usage_stats
 
 
 @pytest.fixture
@@ -64,3 +64,30 @@ async def test_separate_users_tracked_independently(seeded_pool):
     allowed_b, count_b = await check_and_increment(seeded_pool, b, limit=20, input_tokens=1, output_tokens=1)
 
     assert (allowed_b, count_b) == (True, 1)
+
+
+# -- get_usage_stats --------------------------------------------------------
+
+
+async def test_get_usage_stats_aggregates_counts_tokens_and_cost(seeded_pool, user_id):
+    # 2 queries today, 1M input + 500K output tokens total.
+    await check_and_increment(seeded_pool, user_id, limit=99, input_tokens=600_000, output_tokens=300_000)
+    await check_and_increment(seeded_pool, user_id, limit=99, input_tokens=400_000, output_tokens=200_000)
+
+    stats = await get_usage_stats(seeded_pool, input_cost_per_million=0.80, output_cost_per_million=4.00)
+    row = next(r for r in stats if r["user_identifier"] == user_id)
+
+    assert row["queries_today"] == 2
+    assert row["queries_7d"] == 2
+    assert row["queries_30d"] == 2
+    assert row["input_tokens"] == 1_000_000
+    assert row["output_tokens"] == 500_000
+    # 1.0M input * $0.80 + 0.5M output * $4.00 = 0.80 + 2.00
+    assert row["est_cost"] == pytest.approx(2.80)
+
+
+async def test_get_usage_stats_excludes_users_with_no_rows(seeded_pool):
+    absent = f"github:test-{uuid.uuid4()}"
+    stats = await get_usage_stats(seeded_pool, input_cost_per_million=0.80, output_cost_per_million=4.00)
+
+    assert all(r["user_identifier"] != absent for r in stats)

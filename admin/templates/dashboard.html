@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Usage dashboard</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+           margin: 0; padding: 1.5rem; line-height: 1.4; }
+    h1 { font-size: 1.4rem; margin: 0 0 0.25rem; }
+    p.sub { margin: 0 0 1.25rem; opacity: 0.7; }
+    .scroll { overflow: auto; max-height: 80vh; border: 1px solid #8884; border-radius: 8px; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+    th, td { text-align: left; padding: 0.55rem 0.8rem; border-bottom: 1px solid #8883;
+             vertical-align: top; white-space: nowrap; }
+    th { position: sticky; top: 0; background: #8881; backdrop-filter: blur(4px); }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .empty { padding: 2rem; text-align: center; opacity: 0.7; }
+  </style>
+</head>
+<body>
+  <h1>Usage dashboard</h1>
+  <p class="sub">Per-user query counts and estimated LLM cost.</p>
+  {% if rows %}
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>User</th>
+          <th class="num">Queries Today</th>
+          <th class="num">Last 7 Days</th>
+          <th class="num">Last 30 Days</th>
+          <th class="num">Total Input Tokens</th>
+          <th class="num">Total Output Tokens</th>
+          <th class="num">Est. Cost (USD)</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in rows %}
+        <tr>
+          <td>{{ row.user_identifier }}</td>
+          <td class="num">{{ row.queries_today }}</td>
+          <td class="num">{{ row.queries_7d }}</td>
+          <td class="num">{{ row.queries_30d }}</td>
+          <td class="num">{{ "{:,}".format(row.input_tokens) }}</td>
+          <td class="num">{{ "{:,}".format(row.output_tokens) }}</td>
+          <td class="num">${{ "%.4f"|format(row.est_cost) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty">No usage recorded yet.</div>
+  {% endif %}
+</body>
+</html>

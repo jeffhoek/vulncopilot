@@ -1,10 +1,10 @@
 # Public Access Setup
 
 How to run this app with per-user GitHub OAuth login instead of a single shared
-password, with a per-user daily query cap. This covers **PR 1** (OAuth +
-allow-list) and **PR 2** (rate limiting) of the
-[public access plan](../plans/public-access-plan.md). The `/admin` dashboard
-(PR 3) is documented here as it lands.
+password, with a per-user daily query cap and an `/admin` usage dashboard. This
+covers **PR 1** (OAuth + allow-list), **PR 2** (rate limiting), and **PR 3**
+(admin dashboard) of the
+[public access plan](../plans/public-access-plan.md).
 
 ## GitHub OAuth App Setup
 
@@ -42,6 +42,9 @@ and `http://localhost:8000/auth/oauth/github/callback`. GitHub allows
 | `DAILY_QUERY_LIMIT` | `20` | Max queries per user per UTC day. |
 | `ADMIN_DAILY_QUERY_LIMIT` | `100000` | Elevated cap for identifiers in `ADMIN_USER_IDENTIFIERS`. |
 | `ADMIN_USER_IDENTIFIERS` | `[]` | JSON array of GitHub identifiers, e.g. `["github:12345678"]`, that get the elevated cap. |
+| `ADMIN_SECRET` | — | HTTP Basic Auth password for `/admin`. **Required** — the app refuses to start if empty. Generate with `openssl rand -hex 32`. |
+| `LLM_INPUT_COST_PER_MILLION` | `0.80` | USD per million input tokens, for the dashboard's cost estimate. |
+| `LLM_OUTPUT_COST_PER_MILLION` | `4.00` | USD per million output tokens, for the dashboard's cost estimate. |
 
 > **List values are JSON arrays, not comma-separated.** A bare
 > `ALLOWED_LOGINS=jeff,alice` raises a `SettingsError` on startup. Use
@@ -124,6 +127,45 @@ once real usage and `user_usage` token totals show headroom. Token prices for co
 estimation are configured separately (PR 3, `LLM_INPUT_COST_PER_MILLION` /
 `LLM_OUTPUT_COST_PER_MILLION`).
 
+## Admin Dashboard
+
+A read-only `/admin` page shows per-user usage and estimated LLM cost:
+
+| User | Queries Today | Last 7 Days | Last 30 Days | Total Input Tokens | Total Output Tokens | Est. Cost (USD) |
+
+Query counts are windowed (each window inclusive of today); token totals are
+all-time, and the cost estimate is derived from them via
+`LLM_INPUT_COST_PER_MILLION` / `LLM_OUTPUT_COST_PER_MILLION` (so `Settings` is the
+single source of truth for prices). Data comes from `get_usage_stats()` in
+`rag/usage.py`; rendering is `admin/dashboard.py` + the autoescaping
+`admin/templates/dashboard.html`.
+
+### Authentication
+
+The dashboard uses **HTTP Basic Auth**, not a bearer token: browsers don't send an
+`Authorization` header on normal navigation, so a bearer scheme would 403 every
+in-browser visit. Basic Auth makes the browser show a native credential prompt, so
+`/admin` works with no frontend JavaScript.
+
+- **In a browser:** navigate to `/admin`, leave the username blank (it's ignored),
+  and enter `ADMIN_SECRET` as the password.
+- **With curl:** `curl -u :$ADMIN_SECRET https://your-domain/admin`.
+
+Only the password is compared (via `secrets.compare_digest`, to avoid timing
+leaks). `ADMIN_SECRET` is **required**: an empty value would let
+`Authorization: Basic <base64 of ":">` through, so a module-level guard in `app.py`
+aborts `chainlit run` immediately if it's unset — the dashboard can never start
+open. Generate a strong value with `openssl rand -hex 32`.
+
+> **HTTPS is required.** Basic Auth sends the secret as base64 *plaintext*; without
+> TLS it is trivially readable on the wire. On Azure App Service, enforce HTTPS-only
+> in TLS/SSL settings; on GCP Cloud Run, HTTPS is the default. Never expose `/admin`
+> over plain HTTP.
+
+Like `/etl-stats`, the route is mounted directly on Chainlit's FastAPI app and
+re-ordered ahead of Chainlit's `/{full_path:path}` SPA catch-all so the dashboard
+is served instead of the frontend shell.
+
 ## Rollout Sequence
 
 0. **Generate and set `CHAINLIT_AUTH_SECRET`** (`uv run chainlit create-secret`)
@@ -140,6 +182,8 @@ estimation are configured separately (PR 3, `LLM_INPUT_COST_PER_MILLION` /
    automatically on next startup when `DB_INIT_SCHEMA=true`; on a read-only app
    role apply it once with the admin/ETL connection (see below).
 6. Set a real `DAILY_QUERY_LIMIT`.
+7. Set `ADMIN_SECRET` (the app won't start without it) and confirm `/admin`
+   renders behind the Basic Auth prompt over HTTPS.
 
 > The `user_usage` table is additive — applying it never blocks existing traffic.
 > Now that rate limiting has landed you can safely widen the allow-list beyond a
@@ -155,7 +199,13 @@ estimation are configured separately (PR 3, `LLM_INPUT_COST_PER_MILLION` /
 - [ ] Send queries up to the limit → the next query returns the limit message.
 - [ ] `SELECT * FROM user_usage;` in psql shows a row after queries.
 - [ ] `query_count` and the token columns are non-zero.
+- [ ] Navigate to `/admin` in a browser → Basic Auth credential prompt appears.
+- [ ] Enter `ADMIN_SECRET` as the password → the usage table renders.
+- [ ] Enter a wrong password → 401.
+- [ ] Starting the app with `ADMIN_SECRET` unset → fails fast with a clear error.
 
-Automated coverage: the allow-list logic in `tests/unit/test_oauth_callback.py`
-and the atomic counter in `tests/integration/test_usage_db.py` (the latter needs
-`TEST_DATABASE_URL` pointed at a pgvector database).
+Automated coverage: the allow-list logic in `tests/unit/test_oauth_callback.py`,
+the per-user limit in `tests/unit/test_rate_limit.py`, the dashboard auth and
+rendering in `tests/unit/test_admin_dashboard.py`, and the atomic counter plus
+`get_usage_stats` aggregation in `tests/integration/test_usage_db.py` (the latter
+needs `TEST_DATABASE_URL` pointed at a pgvector database).

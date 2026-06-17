@@ -36,3 +36,54 @@ async def check_and_increment(
     """
     new_count = await pool.fetchval(_INCREMENT_SQL, user_id, input_tokens, output_tokens)
     return new_count <= limit, new_count
+
+
+# Per-user aggregate for the /admin dashboard. Query counts are windowed
+# (today / last 7 / last 30 days, each window inclusive of today); token totals
+# are all-time so the estimated cost reflects everything the user has spent.
+_STATS_SQL = """
+SELECT
+    user_identifier,
+    COALESCE(SUM(query_count) FILTER (WHERE query_date = CURRENT_DATE), 0)                      AS queries_today,
+    COALESCE(SUM(query_count) FILTER (WHERE query_date >= CURRENT_DATE - INTERVAL '6 days'), 0) AS queries_7d,
+    COALESCE(SUM(query_count) FILTER (WHERE query_date >= CURRENT_DATE - INTERVAL '29 days'), 0) AS queries_30d,
+    COALESCE(SUM(input_tokens), 0)  AS input_tokens,
+    COALESCE(SUM(output_tokens), 0) AS output_tokens
+FROM user_usage
+GROUP BY user_identifier
+ORDER BY queries_30d DESC, user_identifier
+"""
+
+
+async def get_usage_stats(
+    pool: asyncpg.Pool,
+    input_cost_per_million: float,
+    output_cost_per_million: float,
+) -> list[dict]:
+    """Per-user usage aggregate for the admin dashboard.
+
+    Returns one dict per user with windowed query counts (today / 7-day / 30-day),
+    all-time token totals, and an estimated USD cost computed from the supplied
+    per-million token prices (kept out of this module so ``Settings`` is the single
+    source of truth).
+    """
+    rows = await pool.fetch(_STATS_SQL)
+    stats: list[dict] = []
+    for r in rows:
+        input_tokens = r["input_tokens"]
+        output_tokens = r["output_tokens"]
+        est_cost = (
+            input_tokens / 1_000_000 * input_cost_per_million + output_tokens / 1_000_000 * output_cost_per_million
+        )
+        stats.append(
+            {
+                "user_identifier": r["user_identifier"],
+                "queries_today": r["queries_today"],
+                "queries_7d": r["queries_7d"],
+                "queries_30d": r["queries_30d"],
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "est_cost": est_cost,
+            }
+        )
+    return stats
