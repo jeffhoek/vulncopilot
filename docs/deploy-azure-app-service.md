@@ -146,11 +146,13 @@ these the same way (Pipelines → Edit → Variables → New variable):
 
 > These are optional. `azure-pipelines.yml` defines a safe default for each in its
 > `variables:` block (`''` for the email, `'[]'` for admins), so leaving them unset
-> deploys cleanly. A variable you add in the UI **overrides** that default — when you
-> do add one, set a real value: a UI variable that exists but is empty/blank still
-> overrides, and an undefined `$(NAME)` (were the YAML default ever removed) is passed
-> through literally as the string `$(NAME)`, which crash-loops startup on the JSON
-> parse. The YAML defaults exist specifically to prevent that.
+> deploys cleanly. A variable you add in the UI **overrides** that default. For
+> `ADMIN_USER_IDENTIFIERS`, set valid JSON (`[]` for none) — the deploy reads the
+> value from the variable's **environment variable** (quoted), not a `$(...)` macro,
+> because a macro is substituted as literal text and bash strips the JSON's own
+> double-quotes. The app also now treats a blank value as `[]` rather than crashing,
+> so an empty UI variable is tolerated — but a non-empty *invalid* value (e.g.
+> `[github:1]` with the quotes lost) still fails fast at startup.
 
 ### 2.4 Create the Deployment Environment
 

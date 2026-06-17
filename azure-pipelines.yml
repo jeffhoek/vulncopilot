@@ -125,13 +125,18 @@ stages:
                     scriptType: bash
                     scriptLocation: inlineScript
                     inlineScript: |
+                      # Read JSON/comma values from the env vars Azure exposes for each
+                      # pipeline variable, NOT macro $(...) — a macro is substituted as
+                      # literal source text, so a JSON array's own double-quotes become
+                      # bash quoting and get stripped (["github:1"] -> [github:1], invalid
+                      # JSON -> crash-loop). Quoted env-var expansion preserves them.
                       az deployment group what-if \
                         --resource-group $(resourceGroup) \
                         --template-file infra/main.bicep \
                         --parameters infra/parameters.dev.bicepparam \
                         --parameters pipelineServicePrincipalObjectId=$(PIPELINE_SP_OBJECT_ID) \
-                        --parameters etlEmailTo="$(ETL_EMAIL_TO)" \
-                        --parameters adminUserIdentifiers="$(ADMIN_USER_IDENTIFIERS)"
+                        --parameters etlEmailTo="$ETL_EMAIL_TO" \
+                        --parameters adminUserIdentifiers="$ADMIN_USER_IDENTIFIERS"
 
                 - task: AzureCLI@2
                   displayName: Bicep deploy (incremental)
@@ -140,13 +145,14 @@ stages:
                     scriptType: bash
                     scriptLocation: inlineScript
                     inlineScript: |
+                      # Env-var (not macro) expansion — see the what-if step above for why.
                       az deployment group create \
                         --resource-group $(resourceGroup) \
                         --template-file infra/main.bicep \
                         --parameters infra/parameters.dev.bicepparam \
                         --parameters pipelineServicePrincipalObjectId=$(PIPELINE_SP_OBJECT_ID) \
-                        --parameters etlEmailTo="$(ETL_EMAIL_TO)" \
-                        --parameters adminUserIdentifiers="$(ADMIN_USER_IDENTIFIERS)" \
+                        --parameters etlEmailTo="$ETL_EMAIL_TO" \
+                        --parameters adminUserIdentifiers="$ADMIN_USER_IDENTIFIERS" \
                         --mode Incremental
 
   # ─────────────────────────────────────────────────────────────
