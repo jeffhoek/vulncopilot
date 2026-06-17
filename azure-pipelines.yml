@@ -123,7 +123,9 @@ stages:
                         --resource-group $(resourceGroup) \
                         --template-file infra/main.bicep \
                         --parameters infra/parameters.dev.bicepparam \
-                        --parameters pipelineServicePrincipalObjectId=$(PIPELINE_SP_OBJECT_ID)
+                        --parameters pipelineServicePrincipalObjectId=$(PIPELINE_SP_OBJECT_ID) \
+                        --parameters etlEmailTo=$(ETL_EMAIL_TO) \
+                        --parameters adminUserIdentifiers=$(ADMIN_USER_IDENTIFIERS)
 
                 - task: AzureCLI@2
                   displayName: Bicep deploy (incremental)
@@ -137,6 +139,8 @@ stages:
                         --template-file infra/main.bicep \
                         --parameters infra/parameters.dev.bicepparam \
                         --parameters pipelineServicePrincipalObjectId=$(PIPELINE_SP_OBJECT_ID) \
+                        --parameters etlEmailTo=$(ETL_EMAIL_TO) \
+                        --parameters adminUserIdentifiers=$(ADMIN_USER_IDENTIFIERS) \
                         --mode Incremental
 
   # ─────────────────────────────────────────────────────────────

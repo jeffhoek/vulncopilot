@@ -27,11 +27,14 @@ param openRegistration bool = false
 @description('JSON array of allowed GitHub usernames, e.g. \'["jeffhoek"]\'.')
 param allowedLogins string = '[]'
 
+@description('JSON array of GitHub identifiers with the elevated rate-limit cap, e.g. \'["github:12345678"]\'. Inject from a pipeline variable; do not commit a real value.')
+param adminUserIdentifiers string = '[]'
+
 @description('Cron schedule (UTC) for the ETL refresh job. Default: Mondays 06:00 UTC.')
 param etlCronExpression string = '0 6 * * 1'
 
-@description('Recipient address(es) for the ETL results email (comma-separated).')
-param etlEmailTo string
+@description('Recipient address(es) for the ETL results email (comma-separated). Inject from a pipeline variable; empty disables the email. Do not commit a real address.')
+param etlEmailTo string = ''
 
 var appName = 'chainlit-rag'
 var tags = {
@@ -93,6 +96,7 @@ module appService 'modules/app-service.bicep' = {
     logfireEnabled: logfireEnabled
     openRegistration: openRegistration
     allowedLogins: allowedLogins
+    adminUserIdentifiers: adminUserIdentifiers
     tags: tags
   }
 }

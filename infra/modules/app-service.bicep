@@ -11,6 +11,10 @@ param logfireEnabled bool = false
 // Keep locked to your own login until rate limiting (PR 2) lands.
 param openRegistration bool = false
 param allowedLogins string = '[]' // JSON array, e.g. '["jeffhoek"]'
+// Elevated rate-limit cap for admin/trusted users, keyed by stable GitHub
+// identifier. Personal/env-specific — injected at deploy time from a pipeline
+// variable, not committed to the param file. JSON array, e.g. '["github:123"]'.
+param adminUserIdentifiers string = '[]'
 param tags object = {}
 
 var imageRef = '${acrLoginServer}/chainlit-pydanticai-rag:latest'
@@ -132,6 +136,10 @@ resource appService 'Microsoft.Web/sites@2023-12-01' = {
         {
           name: 'ALLOWED_LOGINS'
           value: allowedLogins
+        }
+        {
+          name: 'ADMIN_USER_IDENTIFIERS'
+          value: adminUserIdentifiers
         }
         {
           name: 'LLM_MODEL'
