@@ -101,6 +101,14 @@ class Settings(BaseSettings):
     allowed_logins: list[str] = []  # GitHub usernames (login field)
     open_registration: bool = False  # True = any OAuth user allowed
 
+    # Rate Limiting
+    daily_query_limit: int = 20
+    # Elevated cap for admin/trusted users, keyed by stable GitHub identifier
+    # (e.g. ADMIN_USER_IDENTIFIERS=["github:12345678"]). Identifiers not listed
+    # get daily_query_limit. JSON-array env var, like the allow-list fields.
+    admin_daily_query_limit: int = 100000
+    admin_user_identifiers: list[str] = []
+
     # MCP Server
     mcp_api_key: str | None = None
 

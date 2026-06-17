@@ -1,9 +1,10 @@
 # Public Access Setup
 
 How to run this app with per-user GitHub OAuth login instead of a single shared
-password. This is **PR 1** of the [public access plan](../plans/public-access-plan.md):
-OAuth + allow-list only. Rate limiting (PR 2) and the `/admin` dashboard (PR 3)
-are documented here as they land.
+password, with a per-user daily query cap. This covers **PR 1** (OAuth +
+allow-list) and **PR 2** (rate limiting) of the
+[public access plan](../plans/public-access-plan.md). The `/admin` dashboard
+(PR 3) is documented here as it lands.
 
 ## GitHub OAuth App Setup
 
@@ -38,6 +39,9 @@ and `http://localhost:8000/auth/oauth/github/callback`. GitHub allows
 | `ALLOWED_EMAILS` | `[]` | JSON array of exact email addresses allowed. |
 | `ALLOWED_EMAIL_DOMAINS` | `[]` | JSON array of email domains (no `@`), e.g. `["mycompany.com"]`. |
 | `ALLOWED_LOGINS` | `[]` | JSON array of GitHub usernames, e.g. `["jeffhoek"]`. |
+| `DAILY_QUERY_LIMIT` | `20` | Max queries per user per UTC day. |
+| `ADMIN_DAILY_QUERY_LIMIT` | `100000` | Elevated cap for identifiers in `ADMIN_USER_IDENTIFIERS`. |
+| `ADMIN_USER_IDENTIFIERS` | `[]` | JSON array of GitHub identifiers, e.g. `["github:12345678"]`, that get the elevated cap. |
 
 > **List values are JSON arrays, not comma-separated.** A bare
 > `ALLOWED_LOGINS=jeff,alice` raises a `SettingsError` on startup. Use
@@ -71,14 +75,54 @@ logged at WARNING level (`OAuth denied: ...`).
 
 Every allowed branch sets `default_user.identifier = f"github:{raw_user_data['id']}"`
 — the stable numeric GitHub ID, **not** the login. GitHub usernames are mutable;
-a rename would otherwise orphan a user's history and (in PR 2) reset their usage
-counter. The login is used only for allow-list matching. Use
-`cl.user_session.get("user").identifier` consistently everywhere a user is keyed.
+a rename would otherwise orphan a user's history and reset their usage counter.
+The login is used only for allow-list matching. Use
+`cl.user_session.get("user").identifier` consistently everywhere a user is keyed
+— including the rate-limit lookup and usage insert.
 
 > **GitHub only for PR 1.** The callback reads `raw_user_data['id']` and
 > `raw_user_data['login']`, which are GitHub-shaped. Google's payload differs and
 > has no `login`, so wiring up Google would require branching the identifier and
 > allow-list logic on `provider_id`. Keep PR 1 GitHub-only.
+
+## Rate Limiting
+
+Each query is capped per user per UTC day via `DAILY_QUERY_LIMIT` (default 20).
+Usage is tracked in the `user_usage` table (one row per user per day), keyed by the
+stable numeric GitHub identifier.
+
+**Elevated cap for admins.** Identifiers listed in `ADMIN_USER_IDENTIFIERS` get
+`ADMIN_DAILY_QUERY_LIMIT` (default 100000) instead of `DAILY_QUERY_LIMIT`, so the
+standard cap applies to everyone else while trusted users run effectively
+unthrottled. Look up your identifier in the `user_usage` table after a query
+(`SELECT user_identifier FROM user_usage;`) and set, e.g.,
+`ADMIN_USER_IDENTIFIERS=["github:12345678"]`. The effective limit is resolved per
+request by `_limit_for()` in `app.py` and used by both the pre-check and the atomic
+record, so admins are never blocked at either phase.
+
+Both the `on_message` and quick-query handlers use a two-phase pattern (factored
+into `enforce_daily_limit()` / `record_usage()` in `app.py`):
+
+1. **Phase 1 — pre-check.** A cheap read-only `SELECT` of today's count. If the
+   user is already at the limit, the request is rejected *before* any LLM call.
+2. **Phase 2 — atomic record.** After the agent runs, a single
+   `INSERT ... ON CONFLICT DO UPDATE` increments the count and adds the run's
+   input/output token totals (`RunResult.usage()`), returning the new count. This
+   upsert is the authoritative gate; the pre-check is a best-effort optimisation.
+
+**TOCTOU trade-off:** concurrent requests from the same user can both pass Phase 1
+before either increments, so a user at the boundary may get one extra LLM call per
+inflight request. For a single-tab UI this is rarely more than one. The atomic
+upsert still records every call accurately, so cost accounting stays correct even
+when a request slips past the boundary.
+
+### Rate Limit Guidance
+
+Pick `DAILY_QUERY_LIMIT` from your tolerable LLM spend. At roughly $0.01 per query,
+20 queries/day × 100 users ≈ $20/day worst case. Start conservative and raise it
+once real usage and `user_usage` token totals show headroom. Token prices for cost
+estimation are configured separately (PR 3, `LLM_INPUT_COST_PER_MILLION` /
+`LLM_OUTPUT_COST_PER_MILLION`).
 
 ## Rollout Sequence
 
@@ -92,9 +136,15 @@ counter. The login is used only for allow-list matching. Use
    `ALLOWED_EMAIL_DOMAINS`) and set `OPEN_REGISTRATION=false`.
 4. Confirm a non-allowed account is denied, then remove `APP_USERNAME` /
    `APP_PASSWORD` from the environment.
+5. Apply the `user_usage` schema (additive, zero-downtime). It is created
+   automatically on next startup when `DB_INIT_SCHEMA=true`; on a read-only app
+   role apply it once with the admin/ETL connection (see below).
+6. Set a real `DAILY_QUERY_LIMIT`.
 
-> Until PR 2 lands (rate limiting), keep the allow-list locked to your own login
-> (`ALLOWED_LOGINS=["jeffhoek"]`) so there's no public-abuse window.
+> The `user_usage` table is additive — applying it never blocks existing traffic.
+> Now that rate limiting has landed you can safely widen the allow-list beyond a
+> single login; until you do, keeping `ALLOWED_LOGINS=["jeffhoek"]` is the
+> zero-risk default.
 
 ## Testing Checklist
 
@@ -102,6 +152,10 @@ counter. The login is used only for allow-list matching. Use
 - [ ] Login with an allowed account → lands in chat.
 - [ ] Login with a disallowed account → denied (when an allow-list is configured).
 - [ ] `OPEN_REGISTRATION=true` → any GitHub account lands in chat.
+- [ ] Send queries up to the limit → the next query returns the limit message.
+- [ ] `SELECT * FROM user_usage;` in psql shows a row after queries.
+- [ ] `query_count` and the token columns are non-zero.
 
-Automated coverage for the allow-list logic lives in
-`tests/unit/test_oauth_callback.py` (`uv run pytest tests/unit/test_oauth_callback.py`).
+Automated coverage: the allow-list logic in `tests/unit/test_oauth_callback.py`
+and the atomic counter in `tests/integration/test_usage_db.py` (the latter needs
+`TEST_DATABASE_URL` pointed at a pgvector database).
