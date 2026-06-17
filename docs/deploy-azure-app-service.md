@@ -132,6 +132,25 @@ Set it as a pipeline UI variable (no YAML edit needed):
 
 In **Azure DevOps** → **Pipelines** → select the pipeline → **Edit** → **Variables** (top-right) → **New variable** → name: `PIPELINE_SP_OBJECT_ID`, value: `<object-id>`, uncheck **Keep this value secret** → **Save**.
 
+### 2.3.1 Personal / environment-specific deploy variables
+
+The bicep keeps personal and environment-specific values **out of git** — they are
+injected at deploy time from pipeline variables (the same mechanism as
+`PIPELINE_SP_OBJECT_ID` above), not hardcoded in `parameters.dev.bicepparam`. Add
+these the same way (Pipelines → Edit → Variables → New variable):
+
+| Variable | Example value | Used for |
+|---|---|---|
+| `ETL_EMAIL_TO` | `you@example.com` | Recipient(s) of the ETL results email (comma-separated). Empty = no email. |
+| `ADMIN_USER_IDENTIFIERS` | `["github:12345678"]` | GitHub identifiers granted the elevated rate-limit cap. **Must be valid JSON** (`[]` for none). |
+
+> Each has a safe bicep default (`''` for the email, `'[]'` for admins), so a manual
+> `az deployment` without them still succeeds. But if you *define* the pipeline
+> variable, **set a real value** — an undefined pipeline variable is passed through
+> literally (e.g. `ADMIN_USER_IDENTIFIERS=$(ADMIN_USER_IDENTIFIERS)`), which would
+> fail the app's JSON parse at startup. Define it with a valid value or don't add it
+> at all.
+
 ### 2.4 Create the Deployment Environment
 
 In **Azure DevOps** → **Pipelines** → **Environments** → **New environment** → name: `chainlit-rag-dev`, resource: **None** → **Create**.

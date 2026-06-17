@@ -20,9 +20,12 @@ param allowedLogins = '["jeffhoek"]'
 //   '0 6 * * 1'    — weekly, Mondays 06:00 UTC (steady state)
 param etlCronExpression = '0 6,18 * * *'
 
-// Recipient(s) for the ETL results email (comma-separated for multiple).
-param etlEmailTo = 'jeffreyscotthoekman@gmail.com'
-
-// pipelineServicePrincipalObjectId is passed as a pipeline variable at deploy time:
+// Personal / environment-specific values are NOT committed here — they are injected
+// at deploy time from Azure DevOps pipeline variables (Pipelines → Edit → Variables),
+// so nothing identifying lives in git. See azure-pipelines.yml:
+//   --parameters etlEmailTo=$(ETL_EMAIL_TO)
+//   --parameters adminUserIdentifiers=$(ADMIN_USER_IDENTIFIERS)
 //   --parameters pipelineServicePrincipalObjectId=$(PIPELINE_SP_OBJECT_ID)
+// Each falls back to a safe default (empty recipient = no email; empty admin list =
+// everyone gets the standard rate limit) if the variable is unset.
 param pipelineServicePrincipalObjectId = ''
