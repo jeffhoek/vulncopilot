@@ -131,6 +131,18 @@ class Settings(BaseSettings):
     admin_daily_query_limit: int = 100000
     admin_user_identifiers: JsonStrList = []
 
+    # Admin Dashboard
+    # HTTP Basic Auth password for /admin. An empty value would let
+    # `Authorization: Basic <base64 of ":">` through, so app.py fails fast at
+    # startup if this is unset. Set a strong random value (e.g. openssl rand -hex 32).
+    admin_secret: str = ""
+
+    # Token Cost Estimation (USD per million tokens) — used by the /admin dashboard
+    # to estimate spend from recorded token totals. One source of truth: usage.py
+    # reads these via arguments rather than its own constants.
+    llm_input_cost_per_million: float = 0.80
+    llm_output_cost_per_million: float = 4.00
+
     # MCP Server
     mcp_api_key: str | None = None
 
