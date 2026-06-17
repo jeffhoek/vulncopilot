@@ -17,6 +17,12 @@ variables:
   appServiceName: app-chainlit-rag-dev
   azureServiceConnection: azure-chainlit-rag
   githubServiceConnection: github-chainlit-rag
+  # Safe defaults for personal/env-specific deploy values. Without these, an
+  # undefined pipeline (UI) variable is passed through literally as "$(NAME)",
+  # which lands in an app setting and crash-loops startup (invalid JSON / address).
+  # A variable set in Pipelines → Edit → Variables overrides the default here.
+  ETL_EMAIL_TO: ''
+  ADMIN_USER_IDENTIFIERS: '[]'
 
 stages:
   # ─────────────────────────────────────────────────────────────
@@ -124,8 +130,8 @@ stages:
                         --template-file infra/main.bicep \
                         --parameters infra/parameters.dev.bicepparam \
                         --parameters pipelineServicePrincipalObjectId=$(PIPELINE_SP_OBJECT_ID) \
-                        --parameters etlEmailTo=$(ETL_EMAIL_TO) \
-                        --parameters adminUserIdentifiers=$(ADMIN_USER_IDENTIFIERS)
+                        --parameters etlEmailTo="$(ETL_EMAIL_TO)" \
+                        --parameters adminUserIdentifiers="$(ADMIN_USER_IDENTIFIERS)"
 
                 - task: AzureCLI@2
                   displayName: Bicep deploy (incremental)
@@ -139,8 +145,8 @@ stages:
                         --template-file infra/main.bicep \
                         --parameters infra/parameters.dev.bicepparam \
                         --parameters pipelineServicePrincipalObjectId=$(PIPELINE_SP_OBJECT_ID) \
-                        --parameters etlEmailTo=$(ETL_EMAIL_TO) \
-                        --parameters adminUserIdentifiers=$(ADMIN_USER_IDENTIFIERS) \
+                        --parameters etlEmailTo="$(ETL_EMAIL_TO)" \
+                        --parameters adminUserIdentifiers="$(ADMIN_USER_IDENTIFIERS)" \
                         --mode Incremental
 
   # ─────────────────────────────────────────────────────────────
