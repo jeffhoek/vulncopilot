@@ -3,7 +3,84 @@
 Used by both load_nvd.py (KEV-scoped) and load_nvd_full.py (full NVD).
 """
 
+import asyncio
 import datetime
+import random
+from email.utils import parsedate_to_datetime
+
+import httpx
+
+# NVD 2.0 is notorious for transient rate-limit / availability errors under load:
+# it returns 403 for rate limiting (not 401), plus 429 and 5xx (especially 503)
+# during traffic spikes. These are transient and worth retrying; anything else is
+# the caller's to handle. See
+# https://github.com/dependency-check/DependencyCheck/issues/6758.
+NVD_RETRYABLE_STATUS = frozenset({403, 429, 500, 502, 503, 504})
+NVD_FETCH_MAX_RETRIES = 8
+NVD_BACKOFF_BASE = 5.0  # seconds — first-attempt target before jitter
+NVD_BACKOFF_CAP = 120.0  # per-attempt ceiling (also caps a server Retry-After)
+
+
+def _backoff_seconds(attempt: int) -> float:
+    """Capped exponential backoff (base * 2**attempt) with equal jitter.
+
+    Equal jitter keeps each wait at least half the target so backoff still grows
+    meaningfully, while the random half spreads out retries from concurrent clients.
+    """
+    target = min(NVD_BACKOFF_CAP, NVD_BACKOFF_BASE * (2**attempt))
+    return target / 2 + random.uniform(0, target / 2)  # noqa: S311 — jitter, not cryptographic
+
+
+def _retry_after_seconds(resp: httpx.Response) -> float | None:
+    """Parse a Retry-After header (delta-seconds or HTTP-date) into seconds, or None."""
+    value = resp.headers.get("Retry-After")
+    if not value:
+        return None
+    value = value.strip()
+    if value.isdigit():
+        return float(value)
+    try:
+        when = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, (when - datetime.datetime.now(datetime.UTC)).total_seconds())
+
+
+async def nvd_get_with_backoff(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    params: dict | None = None,
+    headers: dict | None = None,
+    max_retries: int = NVD_FETCH_MAX_RETRIES,
+    log=print,
+) -> httpx.Response:
+    """GET a URL, retrying NVD's transient 403/429/5xx and transport errors.
+
+    Honors a ``Retry-After`` header when present (capped), otherwise uses capped
+    exponential backoff with jitter. Returns the final ``Response`` so the caller
+    still handles 404/200 itself; re-raises the last transport error if every
+    attempt fails to connect.
+    """
+    for attempt in range(max_retries):
+        last = attempt == max_retries - 1
+        try:
+            resp = await client.get(url, params=params, headers=headers)
+        except httpx.TransportError as e:
+            if last:
+                raise
+            delay = _backoff_seconds(attempt)
+            log(f"  NVD {type(e).__name__}; backing off {delay:.0f}s (attempt {attempt + 1}/{max_retries})")
+            await asyncio.sleep(delay)
+            continue
+
+        if resp.status_code in NVD_RETRYABLE_STATUS and not last:
+            retry_after = _retry_after_seconds(resp)
+            delay = min(retry_after, NVD_BACKOFF_CAP) if retry_after is not None else _backoff_seconds(attempt)
+            log(f"  NVD HTTP {resp.status_code}; backing off {delay:.0f}s (attempt {attempt + 1}/{max_retries})")
+            await asyncio.sleep(delay)
+            continue
+        return resp
 
 
 def extract_cvss_v31(metrics: dict) -> tuple:
