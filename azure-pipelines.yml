@@ -120,16 +120,20 @@ stages:
 
                 - task: AzureCLI@2
                   displayName: Bicep what-if (dry run)
+                  # Map the pipeline variables into the task env via $(...) macros, which
+                  # resolve with full precedence (a UI variable overrides the YAML default).
+                  # The auto-exposed env var for a YAML-block variable does NOT pick up the
+                  # UI override, so referencing $ETL_EMAIL_TO directly would read the empty
+                  # YAML default. The agent assigns these env values directly (no shell
+                  # re-parsing), so a JSON array's double-quotes survive intact.
+                  env:
+                    ETL_EMAIL_TO: $(ETL_EMAIL_TO)
+                    ADMIN_USER_IDENTIFIERS: $(ADMIN_USER_IDENTIFIERS)
                   inputs:
                     azureSubscription: $(azureServiceConnection)
                     scriptType: bash
                     scriptLocation: inlineScript
                     inlineScript: |
-                      # Read JSON/comma values from the env vars Azure exposes for each
-                      # pipeline variable, NOT macro $(...) — a macro is substituted as
-                      # literal source text, so a JSON array's own double-quotes become
-                      # bash quoting and get stripped (["github:1"] -> [github:1], invalid
-                      # JSON -> crash-loop). Quoted env-var expansion preserves them.
                       az deployment group what-if \
                         --resource-group $(resourceGroup) \
                         --template-file infra/main.bicep \
@@ -140,12 +144,16 @@ stages:
 
                 - task: AzureCLI@2
                   displayName: Bicep deploy (incremental)
+                  # See the what-if step above: env: maps the UI-overridable macro values in,
+                  # the script reads them quoted so JSON quotes are preserved.
+                  env:
+                    ETL_EMAIL_TO: $(ETL_EMAIL_TO)
+                    ADMIN_USER_IDENTIFIERS: $(ADMIN_USER_IDENTIFIERS)
                   inputs:
                     azureSubscription: $(azureServiceConnection)
                     scriptType: bash
                     scriptLocation: inlineScript
                     inlineScript: |
-                      # Env-var (not macro) expansion — see the what-if step above for why.
                       az deployment group create \
                         --resource-group $(resourceGroup) \
                         --template-file infra/main.bicep \
