@@ -35,6 +35,7 @@ from scripts.nvd_utils import (
     extract_cwes,
     extract_description,
     extract_reference_urls,
+    nvd_get_with_backoff,
     parse_date,
 )
 
@@ -82,7 +83,9 @@ async def fetch_nvd_cve(client: httpx.AsyncClient, cve_id: str) -> dict | None:
     if NVD_API_KEY:
         headers["apiKey"] = NVD_API_KEY
 
-    resp = await client.get(NVD_API_URL, params={"cveId": cve_id}, headers=headers)
+    # NVD 2.0 frequently returns 403/429/503 under load; back off and retry those
+    # transient statuses instead of skipping the CVE on the first failure.
+    resp = await nvd_get_with_backoff(client, NVD_API_URL, params={"cveId": cve_id}, headers=headers)
     if resp.status_code == 404:
         return None
     resp.raise_for_status()
@@ -108,17 +111,9 @@ async def fetch_nvd_batch(
                 results.append(cve_data)
             else:
                 skipped += 1
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 403:
-                print(f"  Rate limited at {cve_id}, waiting 30s...")
-                await asyncio.sleep(30)
-                cve_data = await fetch_nvd_cve(client, cve_id)
-                if cve_data:
-                    results.append(cve_data)
-            else:
-                print(f"  Error fetching {cve_id}: {e}")
-                skipped += 1
         except Exception as e:
+            # Transient 403/429/5xx are already retried with backoff inside
+            # fetch_nvd_cve; reaching here means the failure persisted, so skip it.
             print(f"  Error fetching {cve_id}: {e}")
             skipped += 1
 

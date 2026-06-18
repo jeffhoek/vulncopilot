@@ -50,6 +50,7 @@ from scripts.nvd_utils import (
     extract_cwes,
     extract_description,
     extract_reference_urls,
+    nvd_get_with_backoff,
     parse_date,
 )
 
@@ -177,8 +178,6 @@ async def fetch_nvd_page(
     pub_end: str | None = None,
 ) -> dict:
     """Fetch a page of CVEs from the NVD API 2.0."""
-    import httpx
-
     params = {
         "startIndex": start_index,
         "resultsPerPage": RESULTS_PER_PAGE,
@@ -196,29 +195,12 @@ async def fetch_nvd_page(
     if NVD_API_KEY:
         headers["apiKey"] = NVD_API_KEY
 
-    for attempt in range(MAX_RETRIES):
-        try:
-            resp = await session.get(NVD_API_URL, params=params, headers=headers)
-            if resp.status_code == 403:
-                print(f"  Rate limited, waiting 30s (attempt {attempt + 1}/{MAX_RETRIES})...")
-                await asyncio.sleep(30)
-                continue
-            resp.raise_for_status()
-            return resp.json()
-        except httpx.HTTPStatusError as e:
-            if attempt < MAX_RETRIES - 1:
-                print(f"  HTTP {e.response.status_code}, retrying in 10s...")
-                await asyncio.sleep(10)
-            else:
-                raise
-        except (httpx.ReadTimeout, httpx.ConnectTimeout):
-            if attempt < MAX_RETRIES - 1:
-                print("  Timeout, retrying in 10s...")
-                await asyncio.sleep(10)
-            else:
-                raise
-
-    raise RuntimeError(f"Failed to fetch NVD page after {MAX_RETRIES} attempts")
+    # NVD 2.0 frequently returns 403/429/503 under load; nvd_get_with_backoff
+    # retries those (and transport errors) with capped exponential backoff,
+    # honoring Retry-After. A persistent non-retryable status still raises here.
+    resp = await nvd_get_with_backoff(session, NVD_API_URL, params=params, headers=headers)
+    resp.raise_for_status()
+    return resp.json()
 
 
 def parse_cve_records(vulnerabilities: list[dict]) -> list[dict]:

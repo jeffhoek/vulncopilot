@@ -38,6 +38,20 @@ uv run chainlit run app.py
 
 See [plans/postgres-hosting-options.md](../plans/postgres-hosting-options.md) for storage sizing with the full NVD dataset.
 
+### Rate limiting & retries
+
+The NVD 2.0 API is a [well-known](https://github.com/dependency-check/DependencyCheck/issues/6758)
+source of transient `403` (rate limit), `429`, and `5xx` (especially `503`) errors
+under load. Both loaders fetch through `nvd_get_with_backoff` in `scripts/nvd_utils.py`,
+which retries those statuses (and transport errors) with **capped exponential backoff
+plus jitter**, honoring a `Retry-After` header when present. Defaults: up to
+`NVD_FETCH_MAX_RETRIES` (8) attempts with a per-wait ceiling of `NVD_BACKOFF_CAP`
+(120s) — ~several minutes of patience per request, which suits the twice-daily ETL.
+
+Set `NVD_API_KEY` to raise the base rate limit (5 → 50 requests / 30s) and lower
+`REQUEST_DELAY` between calls; backoff still applies on top for the 503 spells a key
+alone doesn't prevent. A `404` is never retried — it just means the CVE isn't in NVD.
+
 ## Database Schema
 
 ```sql
