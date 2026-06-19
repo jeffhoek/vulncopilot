@@ -55,6 +55,21 @@ cve.affected = [
 
 > Note: the sample `options` array carries only the three decision **factors** — no rolled-up CISA decision outcome (`Act` / `Attend` / `Track` / `Track*`). We either derive it from the CISA SSVC tree or leave it NULL. See Open Questions.
 
+### Why both blocks, and why we treat them differently
+
+The two blocks shipped in the same deployment but answer **different questions**, and neither replaces the other:
+
+| | `metrics.ssvcV203` (SSVC) | `cve.affected` (Affected) |
+| --- | --- | --- |
+| Question it answers | *How urgently should I act?* | *Does this apply to me, and what do I patch?* |
+| Nature | Prioritization / triage signal | Scope / inventory data |
+| Content | 3 CISA decision factors (exploitation, automatable, technicalImpact) | Per-vendor/product/version ranges, affected vs. fixed |
+| Source | CISA-ADP (coordinator enrichment) | The CNA (e.g. `security@apache.org`) |
+| Cardinality | Tiny fixed enums → good as typed columns | Rich/nested/variable → stays in `raw_json` for now |
+| Vs. existing data | Complements CVSS (severity ≠ priority) | Richer than CPE-based `configurations` / `affected_products` |
+
+In short: **SSVC tells you whether to drop everything; Affected tells you which systems are actually in scope.** A CVE can be CVSS 10.0 with `exploitation=none` (don't panic yet) or moderate CVSS with `exploitation=active, automatable=yes` (patch now); and SSVC is moot if Affected says you don't run the impacted version. That difference in shape and purpose is why SSVC factors are promoted to typed columns (Tier 1) while `affected` stays in `raw_json` + searchable `content` (Tier 2 deferred).
+
 ## Key insight: storage already works
 
 `nvd_vulnerabilities.raw_json` (JSONB) stores the **entire** `cve` object ([rag/database.py:46](rag/database.py:46), upserts in [scripts/load_nvd.py:164](scripts/load_nvd.py:164) and [scripts/load_nvd_full.py:252](scripts/load_nvd_full.py:252)). So **the next incremental sync automatically captures SSVC + affected into `raw_json`** with zero schema changes — the agent can already reach it via `raw_json->'metrics'->'ssvcV203'` / `raw_json->'affected'`.
@@ -143,8 +158,30 @@ The June-17 storm modified ~95% of records, so a normal incremental run's **Phas
 
 Recommended sequence:
 
-1. **Deploy the exponential-backoff PR first.** The current retry logic is fixed 10–30s sleeps ([scripts/load_nvd_full.py:199](scripts/load_nvd_full.py:199)); under sustained latency that stalls. Backoff is effectively a prerequisite to finish the storm sync.
-2. Run from the laptop with `caffeinate -i`, ideally with a **second API key** to raise throughput.
+1. ~~**Deploy the exponential-backoff PR first.**~~ **Done — merged in [PR #93](https://github.com/jeffhoek/chainlit-pydanticai-postgres/pull/93).** This replaced the old fixed 10–30s retry sleeps ([scripts/load_nvd_full.py:199](scripts/load_nvd_full.py:199)) that stalled under sustained latency. Prerequisite for finishing the storm sync — satisfied.
+2. **Disable the scheduled Azure ETL job for the duration of the storm sync**, then run the manual catch-up from the laptop with `caffeinate -i`. The storm sync doesn't need to be *fast* — it needs to not **collide** with the automated run. The scheduled Container Apps Job ([infra/modules/etl-job.bicep:82](infra/modules/etl-job.bicep:82), `Schedule` trigger) fires on `etlCronExpression`; the bicep default is weekly (`0 6 * * 1`) but the **deployed** value is currently ~every 12h (overridden via deploy var). Suspend/disable that job before starting and re-enable when done — so a manual run that overruns the 12h window won't overlap a scheduled one.
+   - This makes a **second API key unnecessary** — throughput stops mattering once nothing is racing the sync. (For the record: NVD ties a key to one email and re-requesting with the same email invalidates the first, and NVD doesn't document whether the 50-req/30s limit is per-key or per-IP — so a second key from the same laptop might give zero gain anyway. Not worth pursuing.)
+   - **Disable / re-enable commands** (Container Apps Jobs have no "pause schedule" flag — point the cron at a date that never occurs, then restore it):
+
+     ```bash
+     # Identify the job + its resource group
+     az containerapp job list -o table          # note the ETL job name + RG
+     RG=<resource-group>
+     JOB=<etl-job-name>
+
+     # 1. RECORD the current cron first — the live value is overridden (~12h),
+     #    NOT the bicep weekly default, so capture it to restore exactly.
+     az containerapp job show -g "$RG" -n "$JOB" \
+       --query "properties.configuration.scheduleTriggerConfig.cronExpression" -o tsv
+
+     # 2. DISABLE — "Feb 31" never exists, so the trigger never fires.
+     az containerapp job update -g "$RG" -n "$JOB" --cron-expression "0 0 31 2 *"
+
+     # 3. RE-ENABLE — restore the value recorded in step 1 (example: every 12h).
+     az containerapp job update -g "$RG" -n "$JOB" --cron-expression "0 */12 * * *"
+     ```
+
+     Updating the cron does not interrupt a run already in flight, and leaves the job (image, identity, env) otherwise untouched.
 3. Run the storm sync **`--skip-embeddings`** first: `--incremental --since 2026-06-15 --skip-embeddings`. Gets SSVC/affected into `raw_json` fast and cheaply; ~275k embeddings during a degraded window is the wrong time to pay that cost.
 4. **`--backfill-ssvc`** (new mode) to populate the five SSVC columns from `raw_json` — pure SQL/Python, no API.
 5. Optional **targeted re-embed** later: the `content` change is additive, so stale embeddings remain usable. If desired, a `--reembed-since` mode can refresh only storm-touched rows (the existing `--backfill-embeddings` only fills NULLs, so it won't refresh changed content — a new mode is needed).
@@ -161,8 +198,8 @@ Recommended sequence:
 
 Tests: extend [tests/unit](tests/unit) with `extract_ssvc` cases (active record, record with no SSVC, malformed options). No live-API tests.
 
-## Open questions
+## Open questions (resolved)
 
-1. **SSVC decision outcome** — derive `Act/Attend/Track` from the CISA tree when only factors are present, or leave `ssvc_decision` NULL until NVD publishes it? (Recommend: leave NULL now; deriving is a separate, well-scoped follow-up.)
-2. **Promote `affected` to columns (Tier 2)** now or defer? (Recommend defer; keep in `raw_json` + surface in `content`.)
-3. **Refresh embeddings for storm-touched records** now or accept slightly stale embeddings? (Recommend defer; content change is additive.)
+1. **SSVC decision outcome** — **Decided: leave `ssvc_decision` NULL for now.** Don't derive `Act/Attend/Track` from the CISA tree yet; populate it if/when NVD publishes the rolled-up decision. Deriving from the tree is a separate, well-scoped follow-up.
+2. **Promote `affected` to columns (Tier 2)** — **Decided: defer.** Keep `affected` in `raw_json` and surface vendor/product in `content`; revisit dedicated columns later.
+3. **Refresh embeddings for storm-touched records** — **Decided: defer.** Accept slightly stale embeddings; the `content` change is additive so existing vectors stay usable. Optional `--reembed-since` pass later if needed.
