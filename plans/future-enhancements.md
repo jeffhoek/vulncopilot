@@ -5,15 +5,61 @@ chatbot, organized by production priority. High-priority items signal that the
 system is designed to operate reliably, securely, and measurably — not just
 demo-able. Medium items are either actively in flight or deliver meaningful
 engineering value once the core is solid. Nice-to-have items expand reach and
-polish but are not the difference between a toy and a product.
+polish but are not the difference between a toy and a product. The Recently
+Shipped section at the top records items that have graduated into production.
+
+## Recently Shipped
+
+Items that have graduated from this list into production. Kept here briefly for
+context on what the remaining work builds on.
+
+### Per-User GitHub OAuth ✅ *(PRs [#85](https://github.com/jeffhoek/chainlit-pydanticai-postgres/pull/85), [#86](https://github.com/jeffhoek/chainlit-pydanticai-postgres/pull/86))*
+
+Replaced the single shared username/password with per-user GitHub OAuth and a
+login allow-list, so access is tied to real identities. This is the identity
+foundation the remaining Role-Based Access Control work (tiered permissions,
+below) builds on. See [public-access-plan.md](public-access-plan.md).
+
+### Per-User Daily Rate Limiting ✅ *(PR [#88](https://github.com/jeffhoek/chainlit-pydanticai-postgres/pull/88))*
+
+Atomic per-user daily query caps tracked in Postgres (`user_usage`), with an
+elevated limit override for admins. Closes the public-abuse window that OAuth
+alone left open.
+
+### Admin Usage & Cost Dashboard ✅ *(PR [#91](https://github.com/jeffhoek/chainlit-pydanticai-postgres/pull/91))*
+
+A `/admin` page (HTTP Basic Auth) showing per-user query volume, token usage,
+and estimated LLM cost. Partially satisfies **Cost Tracking** below — the
+remaining gap is per-query attribution rather than per-user/day aggregates.
 
 ## High Priority — Production-Readiness
 
-### Role-Based Access Control *(plan: PR #28)*
+### SSVC Integration *(plan: [ssvc-affected-integration.md](ssvc-affected-integration.md))*
 
-Implement permission levels such as read-only analyst, power user, and admin
-(who can trigger data loads or manage configuration), backed by OAuth so access
-is tied to real identities rather than shared credentials.
+NVD began publishing CISA-ADP **SSVC** (Stakeholder-Specific Vulnerability
+Categorization) decision factors and CVE-Record-Format **affected** data inside
+the CVE API as of **2026-06-17**. SSVC answers *"how urgently should I act?"* —
+the three CISA factors `exploitation` (none/poc/active), `automatable` (yes/no),
+and `technicalImpact` (partial/total) — and complements CVSS the same way EPSS
+does: severity is not the same as priority.
+
+Top priority among the new data sources for three reasons: it's the freshest
+(shipped days ago), it's nearly free to adopt (the entire `cve` object already
+lands in `nvd_vulnerabilities.raw_json`, so an incremental re-sync captures SSVC
+with zero schema changes), and it carries **operational urgency** — the June-17
+deployment modified ~95% of all CVE records, so the storm re-sync needs to be
+sequenced carefully to avoid colliding with the scheduled ETL job.
+
+- **Tier 0 (no code)**: re-sync, teach the system prompt the `raw_json` JSONB
+  paths. Minimum viable SSVC support.
+- **Tier 1 (recommended)**: promote the low-cardinality SSVC factors to typed,
+  indexed columns for clean filtering/aggregation; surface SSVC + affected
+  vendor/product in the embedded `content`.
+- **Tier 2 (later)**: promote `affected` vendor/product/version ranges to
+  structured columns.
+- **Unlocks**: "active + automatable + total technical impact = top remediation
+  priority" ranking, and a second prioritization signal for the Composite Risk
+  Score and retrieval scoring alongside EPSS.
 
 ### EPSS Score Ingestion
 
@@ -38,6 +84,12 @@ deserves attention this week.
 - **Prerequisite for**: Composite Risk Score, EPSS-weighted retrieval scoring
   (see Medium Priority below).
 
+Prioritized above STIG/IAVA because it's a *universal* signal — every CVE gets
+an EPSS score regardless of audience — and because it's the load-bearing
+dependency for the Composite Risk Score and retrieval-scoring work below. The
+loader is the same shape as the existing KEV pipeline. STIG/IAVA, by contrast,
+is high value only for DoD/federal users (see Medium Priority).
+
 ### Composite Risk Score Tool
 
 A third agent tool, `risk_score(cve_id)`, that returns a single 0–100 number
@@ -49,6 +101,9 @@ pure Python function that blends:
 - EPSS probability, weight ~0.30
 - KEV listed → flat +0.25 bonus
 - KEV ransomware-use → flat +0.10 bonus
+- SSVC factors (once ingested) — `exploitation=active` and `automatable=yes`
+  reinforce the EPSS/KEV signal; usable as a small weighted bump or as an
+  explainability input in the rationale
 - CWE class severity (memory corruption / injection > info-disclosure / DoS),
   small static mapping, weight ~0.05
 
@@ -123,7 +178,10 @@ across sessions.
 ### Cost Tracking
 
 Monitor LLM token usage and embedding API costs on a per-query basis to manage
-operational expenses.
+operational expenses. The Admin Usage & Cost Dashboard (see Recently Shipped)
+already covers per-user/day token totals and estimated cost; the remaining work
+is *per-query* attribution and embedding-call cost, plus surfacing it outside
+the admin page.
 
 ### User Feedback Loop
 
@@ -131,6 +189,15 @@ Let users rate responses (thumbs up/down) to build a signal for prompt tuning
 and retrieval optimization.
 
 ## Medium Priority — In-Flight or High-Value
+
+### Role-Based Access Control — Permission Tiers
+
+The OAuth identity foundation and admin gate already shipped (see Recently
+Shipped); what remains is graduating from a binary user/admin split to real
+permission *levels* — e.g. read-only analyst, power user, and admin (who can
+trigger data loads or manage configuration). Now a smaller, additive change on
+top of the existing `oauth_callback` and admin checks rather than a from-scratch
+auth effort, which is why it drops from High to Medium.
 
 ### OWASP Top 10 (2025) Integration
 
@@ -198,10 +265,25 @@ This is the curated alternative to the broad reference URL scraping effort
 below — same goal (surface remediation context next to CVE data) at a
 fraction of the operational cost.
 
-### STIG / IAVA Compliance Data *(plan: PR #48)*
+### STIG / IAVA Compliance Data *(plan: [stig-iava-integration.md](stig-iava-integration.md))*
 
 Ingest DISA IAVA mandatory-remediation orders and STIG check findings,
-cross-referenced with KEV/NVD CVEs and the CWE taxonomy.
+cross-referenced with KEV/NVD CVEs and the CWE taxonomy. The full plan is
+phased:
+
+- **Phase 1 — IAVA (the high-value, low-cost part)**: a new `iava_entries`
+  table joined to KEV/NVD on `cve_id`, a `load_iava.py` loader, and a
+  `lookup_compliance(cve_id)` tool. Answers "which of our unpatched CVEs carry
+  mandatory DoD remediation orders?" — a question no current tool handles.
+- **Phase 2 — STIG findings**: per-product XCCDF ZIP parsing (no bulk
+  download), CVE/CCI/CWE cross-refs. Meaningfully more loader complexity.
+- **Phase 3 — CCI → NIST 800-53 mapping**: closes the RMF loop (CVE → IAVA →
+  STIG → CCI → control).
+
+Kept at Medium rather than High because its value is **audience-specific** — it
+matters a lot to DoD/federal users and little to everyone else, unlike EPSS and
+SSVC which are universal CVE signals. If the target audience shifts toward
+federal/compliance, Phase 1 alone is cheap enough to justify promoting.
 See [stig-iava-integration.md](stig-iava-integration.md) for the full plan.
 
 ### Hybrid Search with BM25
@@ -229,6 +311,8 @@ query phrasing:
   similarity
 - **EPSS score** — once ingested (see High Priority), use exploitation
   likelihood as a retrieval weight
+- **SSVC factors** — once ingested (see High Priority), boost
+  `exploitation=active` / `automatable=yes` records as a triage signal
 - **Recency** — `date_added` to KEV or NVD publish date as a decay factor
 - **User feedback** — upvoted CVEs gain a small boost (ties into User Feedback
   Loop)
