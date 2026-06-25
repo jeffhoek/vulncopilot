@@ -1,0 +1,203 @@
+{
+  "cve_lookup_2026_25253": {
+    "query": "CVE-2026-25253",
+    "answer": "**CVE-2026-25253** is found in the NVD database:\n\n| Field | Value |\n|-------|-------|\n| **CVE ID** | CVE-2026-25253 |\n| **Product** | OpenClaw (aka clawdbot or Moltbot) before 2026.1.29 |\n| **Description** | OpenClaw obtains a gatewayUrl value from a query string and automatically makes a WebSocket connection without prompting, sending a token value. |\n| **CVSS v3.1 Score** | 8.8 (HIGH) |\n| **CVSS v3.1 Vector** | CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H |\n| **CWE** | CWE-669 |\n| **Published** | 2026-02-01 |\n| **Last Modified** | 2026-02-13 |\n| **References** | https://depthfirst.com/post/1-click-rce-to-steal-your-moltbot-data-and-keys, https://ethiack.com/news/blog/one-click-rce-moltbot, https://github.com/openclaw/openclaw/security/advisories/GHSA-g8p2-7wf7-98mq, and others |\n\n**Note:** This CVE is not currently in the CISA Known Exploited Vulnerabilities (KEV) list.",
+    "tools_used": [
+      "query",
+      "query"
+    ],
+    "context_count": 1,
+    "scores": {
+      "faithfulness": 0.8571428571428571,
+      "context_recall": 0.8,
+      "answer_correctness": 0.7856464432702612
+    }
+  },
+  "latest_kev_additions": {
+    "query": "Latest KEV additions",
+    "answer": "## Latest KEV Additions\n\n| CVE ID | Vendor / Project | Product | Vulnerability | Date Added |\n|--------|-----------------|---------|----------------|------------|\n| **CVE-2024-57728** | SimpleHelp | SimpleHelp | Path Traversal (zip slip) | 2026-04-24 |\n| **CVE-2024-7399** | Samsung | MagicINFO 9 Server | Path Traversal | 2026-04-24 |\n| **CVE-2024-57726** | SimpleHelp | SimpleHelp | Missing Authorization | 2026-04-24 |\n| **CVE-2025-29635** | D-Link | DIR-823X | Command Injection | 2026-04-24 |\n| **CVE-2026-39987** | Marimo | Marimo | Pre-Auth Remote Code Execution | 2026-04-23 |\n| **CVE-2026-33825** | Microsoft | Defender | Insufficient Access Control | 2026-04-22 |\n| **CVE-2025-32975** | Quest | KACE SMA | Improper Authentication | 2026-04-20 |\n| **CVE-2023-27351** | PaperCut | NG/MF | Improper Authentication | 2026-04-20 |\n| **CVE-2024-27199** | JetBrains | TeamCity | Relative Path Traversal | 2026-04-20 |\n| **CVE-2025-2749** | Kentico | Kentico Xperience | Path Traversal | 2026-04-20 |\n\nThe most recent additions (as of 2026-04-24) include critical vulnerabilities in **SimpleHelp**, **Samsung MagicINFO 9**, and **D-Link DIR-823X** routers. Due dates for all 10 are set for early May 2026.",
+    "tools_used": [
+      "query"
+    ],
+    "context_count": 1,
+    "scores": {
+      "faithfulness": 0.9545454545454546,
+      "context_recall": 0.5,
+      "answer_correctness": 0.9370888967095017
+    }
+  },
+  "top_vendors_kev": {
+    "query": "Top vendors in KEV",
+    "answer": "The top vendors in the CISA Known Exploited Vulnerabilities (KEV) catalog are:\n\n1. **Microsoft** \u2014 9 vulnerabilities\n2. **Cisco** \u2014 4 vulnerabilities\n3. **Apple** \u2014 4 vulnerabilities\n4. **Fortinet** \u2014 3 vulnerabilities\n5. **Google** \u2014 3 vulnerabilities\n6. **Apache** \u2014 3 vulnerabilities\n7. **Ivanti** \u2014 3 vulnerabilities\n\nMicrosoft dominates the list, followed by multiple vendors with 3-4 known exploited vulnerabilities each.",
+    "tools_used": [
+      "query"
+    ],
+    "context_count": 1,
+    "scores": {
+      "faithfulness": 0.0,
+      "context_recall": 0.6666666666666666,
+      "answer_correctness": 0.8125013157768473
+    }
+  },
+  "cwe_78": {
+    "query": "CWE-78",
+    "answer": "**CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')**\n\n- **Abstraction:** Base\n- **Description:** The product constructs all or part of an OS command using externally-influenced input from an upstream component, but it does not neutralize or incorrectly neutralizes special elements that could modify the intended OS command.\n- **Reference:** https://cwe.mitre.org/data/definitions/78.html\n\nThis is a fundamental command injection vulnerability where user-controlled input is incorporated into operating system commands without proper sanitization, allowing attackers to execute arbitrary commands.",
+    "tools_used": [
+      "query"
+    ],
+    "context_count": 1,
+    "scores": {
+      "faithfulness": 0.625,
+      "context_recall": 1.0,
+      "answer_correctness": 0.7352968313815409
+    }
+  },
+  "log4j": {
+    "query": "Log4j",
+    "answer": "## Log4j Overview\n\nThe Apache Log4j project has multiple known critical vulnerabilities:\n\n### **CVE-2021-44228** (CVSS 10.0 - CRITICAL)\n- **Affected versions**: Log4j2 2.0-beta9 through 2.15.0 (excluding patched releases 2.12.2, 2.12.3, 2.3.1)\n- **Issue**: JNDI features in configuration, log messages, and parameters allow attackers to execute arbitrary code by controlling log message content or parameters. An attacker can load malicious code from LDAP servers when message lookup substitution is enabled.\n- **Fix**: Disabled by default in 2.15.0; completely removed in 2.16.0 and patched versions\n- **Note**: Only affects log4j-core; does not impact log4net, log4cxx, or other Apache Logging Services projects\n\n### **CVE-2021-45046** (CVSS 9.0 - CRITICAL)\n- **Affected versions**: Log4j2, with incomplete fix in 2.15.0\n- **Issue**: In non-default configurations using Context Lookup or Thread Context Map patterns, attackers can craft malicious JNDI Lookup patterns for RCE or information disclosure\n- **Fix**: Log4j 2.16.0 (Java 8) and 2.12.2 (Java 7) removed message lookup patterns and disabled JNDI by default\n- **Status**: Known ransomware campaign use\n\n### **CVE-2021-45105** (CVSS 5.9 - MEDIUM)\n- **Affected versions**: Log4j2 2.0-alpha1 through 2.16.0 (excluding 2.12.3, 2.3.1)\n- **Issue**: Uncontrolled recursion from self-referential lookups allows denial of service when Thread Context Map data is controlled\n- **Fix**: Log4j 2.17.0, 2.12.3, and 2.3.1\n\n### **CVE-2017-5645** (CVSS 9.8 - CRITICAL)\n- **Affected versions**: Log4j2 before 2.8.2\n- **Issue**: Deserialization of arbitrary code when TCP/UDP socket servers receive specially crafted binary payloads",
+    "tools_used": [
+      "retrieve"
+    ],
+    "context_count": 5,
+    "scores": {
+      "faithfulness": 1.0,
+      "context_recall": 0.8888888888888888,
+      "answer_correctness": 0.6129395109140021
+    }
+  },
+  "ransomware_linked_vulns": {
+    "query": "Ransomware-linked vulns",
+    "answer": "Found **56 ransomware-linked vulnerabilities** in the CISA KEV database. Here are the key findings:\n\n**Known Ransomware Campaign Use (7 confirmed):**\n1. **CVE-2021-44228** - Apache Log4j2 Remote Code Execution (added Dec 2021)\n2. **CVE-2021-45046** - Apache Log4j2 Deserialization (added May 2023)\n3. **CVE-2017-11882** - Microsoft Office Memory Corruption (added Nov 2021)\n4. **CVE-2018-13379** - Fortinet FortiOS SSL VPN Path Traversal (added Nov 2021)\n5. **CVE-2017-7921** - Hikvision Multiple Products Improper Authentication (added Mar 2026)\n6. **CVE-2023-27351** - PaperCut NG/MF Improper Authentication (added Apr 2026)\n7. **CVE-2024-27199** - JetBrains TeamCity Relative Path Traversal (added Apr 2026)\n\n**Recent Critical Additions (Apr 2026):**\n- SimpleHelp vulnerabilities (CVE-2024-57726, CVE-2024-57728)\n- Samsung MagicINFO 9 Server Path Traversal\n- Marimo Remote Code Execution\n- Multiple Cisco Catalyst SD-WAN Manager vulnerabilities\n\n**Other Notable Recent (Unknown status but in ransomware list):**\n- CVE-2025-0282 - Ivanti Connect Secure stack-based buffer overflow (Jan 2025, likely Known)\n- CVE-2024-53704 - SonicWall SonicOS SSLVPN authentication bypass (Feb 2025)\n\nWould you like details on any specific vulnerability, or analysis by vendor/product?",
+    "tools_used": [
+      "query"
+    ],
+    "context_count": 1,
+    "scores": {
+      "faithfulness": 0.8787878787878788,
+      "context_recall": 0.9,
+      "answer_correctness": NaN
+    }
+  },
+  "critical_vulns_active_exploits": {
+    "query": "Critical vulns with active exploits",
+    "answer": "## Critical Vulnerabilities with Known Active Exploits\n\nHere are **22 critical CVEs** from the CISA KEV database (CVSS 9.0+):\n\n| CVE | Vendor/Product | Severity | Score | Active Exploit Use |\n|-----|---|---|---|---|\n| **CVE-2021-44228** | Apache Log4j2 | CRITICAL | 10.0 | **Known** |\n| **CVE-2025-32975** | Quest KACE SMA | CRITICAL | 10.0 | Unknown |\n| **CVE-2025-32432** | Craft CMS | CRITICAL | 10.0 | Unknown |\n| **CVE-2026-20131** | Cisco Secure FMC | CRITICAL | 10.0 | **Known (Ransomware)** |\n| **CVE-2026-20963** | Microsoft SharePoint | CRITICAL | 9.8 | Unknown |\n| **CVE-2026-21643** | Fortinet FortiClient EMS | CRITICAL | 9.8 | Unknown |\n| **CVE-2026-1340** | Ivanti EPMM | CRITICAL | 9.8 | Unknown |\n| **CVE-2024-57726** | SimpleHelp | CRITICAL | 9.9 | Unknown |\n| **CVE-2025-68613** | n8n | CRITICAL | 9.9 | Unknown |\n| **CVE-2025-0282** | Ivanti Connect/Policy/ZTA | CRITICAL | 9.0 | **Known (Ransomware)** |\n| **CVE-2024-53704** | SonicWall SonicOS | CRITICAL | 9.8 | **Known (Ransomware)** |\n\n**Key findings:**\n- **Log4j RCE (CVE-2021-44228)**: The most severe - known exploitation campaigns\n- **3 vulnerabilities** with confirmed ransomware campaign use\n- Vendors heavily targeted: **Fortinet, Ivanti, Cisco, Microsoft**\n- Attack vectors: RCE, auth bypass, deserialization, buffer overflow",
+    "tools_used": [
+      "query",
+      "query"
+    ],
+    "context_count": 1,
+    "scores": {
+      "faithfulness": 0.9230769230769231,
+      "context_recall": 0.7777777777777778,
+      "answer_correctness": 0.449924259084032
+    }
+  },
+  "anthropic_claude": {
+    "query": "Anthropic Claude vulns",
+    "answer": "There are **2 known vulnerabilities** related to Anthropic Claude in the NVD database, both affecting **Claude Code**:\n\n| CVE ID | Severity | Score | Issue | Published |\n|--------|----------|-------|-------|-----------|\n| **CVE-2026-39861** | CRITICAL | 10.0 | Sandbox escape via symlink creation - sandboxed processes could create symlinks pointing outside the workspace (fixed in v2.1.64) | 2026-04-21 |\n| **CVE-2026-25723** | MEDIUM | 6.5 | Command validation bypass - piped sed operations with echo could bypass file write restrictions (fixed in v2.0.55) | 2026-02-06 |\n\nNeither of these vulnerabilities appears in the CISA Known Exploited Vulnerabilities (KEV) list, so they are not yet known to be exploited in active campaigns.",
+    "tools_used": [
+      "query",
+      "query"
+    ],
+    "context_count": 1,
+    "scores": {
+      "faithfulness": 0.7777777777777778,
+      "context_recall": 0.5714285714285714,
+      "answer_correctness": NaN
+    }
+  },
+  "openclaw": {
+    "query": "OpenClaw",
+    "answer": "Based on the search results, **OpenClaw** appears in one known vulnerability:\n\n**CVE-2026-25253**\n- **Vendor/Project:** OpenClaw (also known as clawdbot or Moltbot)\n- **Vulnerability:** Prior to version 2026.1.29, OpenClaw obtains a `gatewayUrl` value from a query string and automatically makes a WebSocket connection without prompting, while sending a token value.\n- **CVSS v3.1 Score:** 8.8 (HIGH)\n- **CVSS Vector:** CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H\n- **CWEs:** CWE-669\n- **Affected Product:** OpenClaw for Node.js\n\nThis is a vulnerability in the Node.js version of OpenClaw that allows unauthenticated network access with minimal complexity and requires user interaction to exploit.",
+    "tools_used": [
+      "retrieve"
+    ],
+    "context_count": 5,
+    "scores": {
+      "faithfulness": 1.0,
+      "context_recall": 0.75,
+      "answer_correctness": NaN
+    }
+  },
+  "cve_2017_11882_refs": {
+    "query": "Reference URLs for CVE-2017-11882",
+    "answer": "Here are the reference URLs for **CVE-2017-11882**:\n\n1. http://reversingminds-blog.logdown.com/posts/3907313-fileless-attack-in-word-without-macros-cve-2017-11882\n2. http://www.securityfocus.com/bid/101757\n3. http://www.securitytracker.com/id/1039783\n4. https://0patch.blogspot.com/2017/11/did-microsoft-just-manually-patch-their.html\n5. https://0patch.blogspot.com/2017/11/official-patch-for-cve-2017-11882-meets.html\n6. https://github.com/0x09AL/CVE-2017-11882-metasploit\n7. https://github.com/embedi/CVE-2017-11882\n8. https://github.com/rxwx/CVE-2017-11882\n9. https://github.com/unamer/CVE-2017-11882\n10. https://portal.msrc.microsoft.com/en-US/security-guidance/advisory/CVE-2017-11882",
+    "tools_used": [
+      "query"
+    ],
+    "context_count": 1,
+    "scores": {
+      "faithfulness": NaN,
+      "context_recall": 0.7777777777777778,
+      "answer_correctness": 0.8207812928077973
+    }
+  },
+  "top_ai_vulns_2026": {
+    "query": "Top AI vulns in 2026",
+    "answer": "The database doesn't contain many AI-specific vulnerabilities from 2026 yet. However, the results show some relevant vulnerabilities in AI/automation-related tools:\n\n**Top AI-Related Vulnerabilities in 2026:**\n\n1. **CVE-2026-39987** \u2013 **Marimo** (CVSS 9.8 CRITICAL)\n   - Pre-authorization remote code execution allowing unauthenticated shell access and arbitrary command execution\n   - Published: April 9, 2026\n\n2. **CVE-2026-33017** \u2013 **Langflow** (CVSS 9.8 CRITICAL)\n   - Code injection vulnerability allowing public flows without authentication\n   - Published: March 20, 2026\n\n3. **CVE-2025-68613** \u2013 **n8n** (CVSS 9.9 CRITICAL)\n   - Improper control of dynamically-managed code resources in workflow expression evaluation, leading to RCE\n   - Published: December 19, 2025; added to KEV: March 11, 2026\n\n4. **CVE-2026-33634** \u2013 **Aquasecurity Trivy** (CVSS 8.8 HIGH)\n   - Embedded malicious code vulnerability allowing access to CI/CD environment, tokens, SSH keys, and cloud credentials\n   - Published: March 23, 2026\n\nThese vulnerabilities primarily affect automation platforms, workflow orchestration tools, and development tools used in AI/ML pipelines rather than AI models themselves. The focus is on code execution and authentication bypass vulnerabilities in infrastructure supporting AI operations.",
+    "tools_used": [
+      "query"
+    ],
+    "context_count": 1,
+    "scores": {
+      "faithfulness": NaN,
+      "context_recall": 0.0,
+      "answer_correctness": NaN
+    }
+  },
+  "vpn_remote_access_vulns": {
+    "query": "VPN and remote access vulns",
+    "answer": "## VPN and Remote Access Vulnerabilities\n\nHere are the most critical known exploited vulnerabilities in VPN and remote access systems:\n\n### High-Priority Known Exploited Vulnerabilities\n\n| CVE | Vendor | Product | Severity | CVSS | Due Date | Status |\n|-----|--------|---------|----------|------|----------|--------|\n| **CVE-2024-53704** | SonicWall | SonicOS SSLVPN | CRITICAL | 9.8 | 2025-03-11 | **Known Ransomware Use** |\n| **CVE-2018-13379** | Fortinet | FortiOS SSL VPN | CRITICAL | 9.1 | 2022-05-03 | **Known Ransomware Use** |\n\n### Key Details\n\n**CVE-2024-53704 \u2014 SonicWall SonicOS SSLVPN Authentication Bypass**\n- **Issue**: Improper authentication in SSLVPN mechanism allows remote attackers to bypass authentication\n- **Affected**: SonicOS 7.1.2-7019, 8.0.0-8035\n- **Impact**: Complete authentication bypass (CVSS 9.8)\n- **CWE**: CWE-287 (Improper Authentication)\n- **Added to KEV**: 2025-02-18\n\n**CVE-2018-13379 \u2014 Fortinet FortiOS SSL VPN Path Traversal**\n- **Issue**: Path traversal in SSL VPN web portal allows unauthenticated file download\n- **Impact**: System file disclosure (CVSS 9.1)\n- **Known actively exploited by ransomware campaigns**\n\n### Related Findings\n- **CVE-2021-22054**: VMware Workspace ONE UEM SSRF (network access tools)\n- **CVE-2026-20133**: Cisco SD-WAN information disclosure\n- **CVE-2026-1603**: Ivanti Endpoint Manager authentication bypass\n\n**Action**: Prioritize patching SonicWall SSLVPN and FortiOS SSL VPN systems immediately.",
+    "tools_used": [
+      "retrieve",
+      "query"
+    ],
+    "context_count": 6,
+    "scores": {
+      "faithfulness": 0.8275862068965517,
+      "context_recall": 0.7142857142857143,
+      "answer_correctness": NaN
+    }
+  },
+  "network_device_vulns": {
+    "query": "Network device vulns",
+    "answer": "## Network Device Vulnerabilities (Known Exploited)\n\nHere are the actively exploited network device vulnerabilities tracked by CISA:\n\n| CVE | Vendor | Product | Description | Ransomware Use |\n|-----|--------|---------|-------------|-----------------|\n| **CVE-2026-20133** | Cisco | Catalyst SD-WAN Manager | Exposure of sensitive information to unauthorized actors | Unknown |\n| **CVE-2026-20122** | Cisco | Catalyst SD-WAN Manager | Incorrect use of privileged APIs; improper file handling | Unknown |\n| **CVE-2026-20128** | Cisco | Catalyst SD-WAN Manager | Passwords stored in recoverable format | Unknown |\n| **CVE-2026-21643** | Fortinet | FortiClient EMS | SQL injection in management interface | Unknown |\n| **CVE-2026-35616** | Fortinet | FortiClient EMS | Improper access control | Unknown |\n| **CVE-2026-20131** | Cisco | Secure Firewall Management Center (FMC) | **Known ransomware use** - Deserialization of untrusted data | **Known** |\n| **CVE-2025-0282** | Ivanti | Connect/Policy Secure, ZTA Gateways | **Known ransomware use** - Unauthenticated RCE via buffer overflow | **Known** |\n| **CVE-2018-13379** | Fortinet | FortiOS SSL VPN | **Known ransomware use** - Path traversal allows system file download | **Known** |\n\n**Critical items**: Three vulnerabilities have confirmed ransomware campaign use (CVE-2026-20131, CVE-2025-0282, CVE-2018-13379). The Cisco Catalyst SD-WAN Manager and Fortinet FortiClient EMS issues are recent (2026).",
+    "tools_used": [
+      "query"
+    ],
+    "context_count": 1,
+    "scores": {
+      "faithfulness": NaN,
+      "context_recall": 1.0,
+      "answer_correctness": 0.5362424934706478
+    }
+  },
+  "microsoft_product_vulns": {
+    "query": "Microsoft product vulns",
+    "answer": "## Microsoft Product Vulnerabilities (KEV Database)\n\nHere are the **9 known exploited Microsoft vulnerabilities** currently tracked:\n\n| CVE ID | Product | Severity | Vulnerability Type |\n|--------|---------|----------|-------------------|\n| **CVE-2026-33825** | Defender | HIGH | Insufficient Granularity of Access Control |\n| **CVE-2009-0238** | Office | HIGH | Remote Code Execution |\n| **CVE-2026-32201** | SharePoint Server | MEDIUM | Improper Input Validation |\n| **CVE-2023-21529** | Exchange Server | HIGH | Deserialization of Untrusted Data (RCE) |\n| **CVE-2023-36424** | Windows | HIGH | Out-of-Bounds Read |\n| **CVE-2025-60710** | Windows | HIGH | Link Following / Privilege Escalation |\n| **CVE-2012-1854** | Visual Basic for Applications | HIGH | Insecure Library Loading (RCE) |\n| **CVE-2026-20963** | SharePoint | CRITICAL | Deserialization of Untrusted Data (RCE) |\n| **CVE-2017-11882** | Office | HIGH | Memory Corruption (RCE) |\n\nMost are **remote code execution (RCE)** or **privilege escalation** vulnerabilities affecting Office, Exchange Server, SharePoint, and Windows. The most recent addition was **CVE-2026-33825** (Defender, Apr 2026).\n\nWould you like details on a specific CVE or product?",
+    "tools_used": [
+      "query",
+      "query"
+    ],
+    "context_count": 1,
+    "scores": {
+      "faithfulness": 0.6923076923076923,
+      "context_recall": 1.0,
+      "answer_correctness": 0.9176173377422525
+    }
+  },
+  "top_cwe_by_avg_cvss": {
+    "query": "Top CWE categories by avg CVSS score",
+    "answer": "**Top CWE Categories by Average CVSS Score:**\n\n| CWE | Name | Vuln Count | Avg CVSS v3.1 | Avg CVSS v2 |\n|-----|------|------------|---------------|-------------|\n| CWE-400 | Uncontrolled Resource Consumption | 1 | 10.00 | 9.30 |\n| CWE-61 | UNIX Symbolic Link (Symlink) Following | 1 | 10.00 | \u2014 |\n| CWE-913 | Improper Control of Dynamically-Managed Code Resources | 2 | 9.90 | \u2014 |\n| CWE-862 | Missing Authorization | 1 | 9.90 | \u2014 |\n| CWE-284 | Improper Access Control | 1 | 9.80 | \u2014 |\n| CWE-89 | Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection') | 1 | 9.80 | \u2014 |\n| CWE-522 | Insufficiently Protected Credentials | 2 | 9.80 | 7.50 |\n| CWE-95 | Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection') | 1 | 9.80 | \u2014 |\n| CWE-502 | Deserialization of Untrusted Data | 7 | 9.71 | 8.40 |\n| CWE-94 | Improper Control of Generation of Code ('Code Injection') | 9 | 9.39 | 9.30 |\n\nThe highest-severity weakness categories are dominated by **authentication/authorization bypasses** and **code injection** vulnerabilities, with **CWE-400** and **CWE-61** tied at a perfect 10.0 CVSS v3.1 score.",
+    "tools_used": [
+      "query",
+      "query"
+    ],
+    "context_count": 1,
+    "scores": {
+      "faithfulness": 0.9166666666666666,
+      "context_recall": 0.8571428571428571,
+      "answer_correctness": 0.6590330342006351
+    }
+  }
+}

@@ -26,10 +26,14 @@ were just curated by user-journey grouping, so they're a strong starting point.
 - Pytest-based eval harness that invokes `rag_agent.run()` programmatically
 - Ragas scorers: `context_recall`, `answer_correctness`, `faithfulness`
 - Frozen Postgres+pgvector fixture so eval runs are deterministic
-- New GitHub Actions workflow (manual + PR-paths-filter + weekly cron)
-- Score artifacts uploaded per run; advisory thresholds in the first iteration
+- Baseline runs captured locally and committed under `evals/baselines/`
+- Score artifacts written to `evals/results.json`; advisory thresholds in
+  PRs 1-2, hard floors in PR 3
 
 **Out of scope (deferred to Phase 2 or beyond):**
+- GitHub Actions workflow — deferred until the feature is merged to main.
+  Local runs against the frozen seed produce identical numbers, so CI adds
+  no signal until there are PRs to gate or a stable baseline to drift-check.
 - Logfire online sampling and live-traffic scoring
 - autoevals (Ragas covers the listed metrics; autoevals can layer in later if
   a metric Ragas lacks becomes important)
@@ -161,70 +165,72 @@ LLM judge for Ragas: Anthropic Claude Haiku (same as the agent), configurable
 via `EVAL_JUDGE_MODEL` env var. Keeps cost low; judge model can be upgraded if
 its scoring proves noisy.
 
-### CI workflow
+### CI workflow — deferred
 
-`.github/workflows/evals.yml` — separate from
-[.github/workflows/test.yml](../.github/workflows/test.yml) to avoid slowing PR
-feedback on changes that can't affect eval scores.
+The GitHub Actions workflow originally scoped here is deferred until the
+eval feature is merged to main. Rationale: with a frozen seed DB and
+dataset, local runs produce identical numbers, so CI adds no signal until
+there are PRs to gate or a stable baseline to drift-check. PR 3
+(thresholds) consumes baselines captured locally — see "Baselines" below.
 
-Triggers:
-- `workflow_dispatch` — manual runs anytime
-- `pull_request` with `paths:` filter on `rag/**`, `config.py`, `evals/**`,
-  `pyproject.toml`, `uv.lock` — runs only when a change could plausibly affect
-  scores. This is the primary signal.
-- `schedule: cron 0 6 * * 1` — weekly Monday 6am UTC. Catches silent drift in
-  upstream Claude/OpenAI APIs and breakage from auto-updated deps. ~$4/mo.
+Prerequisites that would justify reviving this section:
+- Eval feature merged to main (gives `pull_request`-triggered runs
+  something to compare against).
+- ≥3 baselines committed under `evals/baselines/` (gives the threshold
+  floors a stable reference point).
+- PR 3 thresholds landed (turns the workflow from advisory into a real
+  signal).
 
-(No nightly. With a frozen seed DB and frozen dataset, day-over-day runs
-produce identical numbers — weekly gives the same drift-detection coverage at
-~7× lower cost.)
+Reference sketch for the eventual revival (preserved so nothing is lost):
+`.github/workflows/evals.yml`, separate from
+[.github/workflows/test.yml](../.github/workflows/test.yml). Triggers:
+`workflow_dispatch`, `pull_request` with `paths:` filter on `rag/**`,
+`config.py`, `evals/**`, `pyproject.toml`, `uv.lock`, and
+`schedule: cron 0 6 * * 1`. Steps: Postgres 16 + pgvector service
+container, load `evals/fixtures/eval_db_seed.jsonl`, `uv sync --group
+eval`, `uv run pytest evals/ -v --tb=short`, upload `evals/results.json`
+artifact. Job-level env: `EVAL_DATABASE_URL`, `EVAL_JUDGE_MODEL`,
+`OPENAI_API_KEY`, `ANTHROPIC_API_KEY` (the latter two are already
+configured for the existing Claude Code workflow).
 
-Job steps:
-1. Postgres 16 + pgvector service container (`pgvector/pgvector:pg16`)
-2. Restore `evals/fixtures/eval_db_seed.sql`
-3. `uv sync --group eval`
-4. `uv run pytest evals/ -v --tb=short`
-5. Upload `evals/results.json` as workflow artifact
-6. (Future) Post a summary comment on the PR with score deltas vs. main
+### Baselines
 
-`results.json` is written unconditionally by the session-scoped fixture in
-`evals/conftest.py` (which delegates to `evals/scoring.py`) — no custom
-pytest flag is needed. This avoids registering a `--eval-report` option via
-`pytest_addoption` and keeps the CI step a vanilla `pytest` invocation.
+Baseline runs are captured locally and committed under `evals/baselines/`.
+This is the source of truth PR 3 reads from to derive hard floors.
 
-Workflow `env:` block (job-level, so all steps inherit):
+Capture command (run after a clean local `uv run pytest evals/`):
 
-```yaml
-env:
-  EVAL_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
-  EVAL_JUDGE_MODEL: claude-haiku-4-5
-  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+```bash
+mkdir -p evals/baselines
+cp evals/results.json evals/baselines/run-$(date +%Y%m%d-%H%M%S).json
+git add evals/baselines/
 ```
 
-- `EVAL_DATABASE_URL` mirrors the [tests/conftest.py:55](../tests/conftest.py)
-  `TEST_DATABASE_URL` convention and is read by `evals/conftest.py` to build
-  the eval DB pool. Value points at the Postgres service container above.
-- `EVAL_JUDGE_MODEL` makes the Ragas judge model explicit. `claude-haiku-4-5`
-  is the documented default; override per workflow run if needed.
+Format: full per-entry/per-metric JSON dumps — same shape `scoring.py`
+emits. Per-entry detail is preserved on purpose: when one row drags a
+metric down, you want to know which one without re-running.
 
-Secrets `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are already in the repo for
-the existing Claude Code workflow.
+Gitignore: the existing `.gitignore` rule scopes narrowly to
+`evals/results.json` (the working file). `evals/baselines/run-*.json`
+is tracked by default — no rule change needed.
 
 ### Thresholds — staged rollout
 
-Phase 1.0 (first PR): scorers run, results recorded, **no assertions**. Goal:
-collect baseline scores across ≥3 runs.
+PRs 1-2 (shipped): scorers run, results recorded, **no assertions**.
+Advisory mode — goal was to collect baseline scores from clean runs.
 
-Phase 1.1 (follow-up PR after baseline): hard floors applied, derived from
-baseline mean − 1σ. Strawman starting points if baseline data isn't available:
+**PR 3** (was PR 4): hard floors applied, derived from baseline `mean − 1σ`
+per metric. Threshold-derivation script reads every
+`evals/baselines/run-*.json`, computes per-metric mean and σ across runs,
+and writes the floors into `scoring.py`. Strawman starting points if
+baseline data is sparse:
 - `context_recall ≥ 0.70`
 - `faithfulness ≥ 0.80`
 - `answer_correctness ≥ 0.60`
 
-Failures fail the eval workflow. They do not block PR merges (eval workflow is
-not part of required checks) — this is a signal, not a gate, until the
-framework proves stable.
+Failures fail the local eval run. They do not block PR merges (no CI
+workflow yet) — this is a signal, not a gate, until the framework proves
+stable.
 
 ## Cost estimate
 
@@ -251,11 +257,13 @@ evals/
 ├── harness.py                     # run_query + EvalResult + context extraction
 ├── scoring.py                     # Ragas wrapper + threshold logic
 ├── test_offline_evals.py          # parametrized pytest entrypoint
+├── baselines/                     # committed run-*.json snapshots; PR 3 reads
+│   └── run-YYYYMMDD-HHMMSS.json   # these to derive hard floors
 └── fixtures/
     ├── build_seed.py              # one-time generator from dev DB
-    └── eval_db_seed.sql           # committed snapshot
+    └── eval_db_seed.jsonl         # committed snapshot
 
-.github/workflows/evals.yml        # new workflow, separate from test.yml
+# Deferred: .github/workflows/evals.yml — see "CI workflow — deferred" above
 
 pyproject.toml                     # add `[dependency-groups] eval` with
                                    # ragas, datasets, pyyaml
@@ -274,31 +282,285 @@ to existing deps).
 - [`config.py:90`](../config.py) — `action_buttons` setting (source of seed
   entries)
 - [`.github/workflows/test.yml`](../.github/workflows/test.yml) — uv setup
-  pattern copied into evals.yml
+  pattern to copy into `evals.yml` if/when the deferred CI workflow is
+  revived
 
 ## Iteration plan
 
-1. **PR 1 — scaffolding**: dataset.yaml (5 entries), harness, conftest, one
-   scorer (`faithfulness`), seed fixture, local-only run
-2. **PR 2 — full dataset + scorers**: add remaining 10 entries + `context_recall`
-   + `answer_correctness`
-3. **PR 3 — CI**: add `.github/workflows/evals.yml`, run baseline, upload
-   artifacts, no assertions
-4. **PR 4 — thresholds**: read baseline scores, apply hard floors, document in
-   evals/README.md
+1. **PR 1 — scaffolding** ✓ (shipped): dataset.yaml (5 entries), harness,
+   conftest, one scorer (`faithfulness`), seed fixture, local-only run
+2. **PR 2 — full dataset + scorers** ✓ (shipped): add remaining 10 entries
+   + `context_recall` + `answer_correctness`
+3. **PR 3 — thresholds** (was PR 4): commit ≥3 baseline runs under
+   `evals/baselines/`, add a threshold-derivation script that computes
+   `mean − 1σ` per metric, apply hard floors in `scoring.py`, document
+   in `evals/README.md`.
+4. **Deferred — CI workflow** (was PR 3): `.github/workflows/evals.yml`,
+   revisit once the feature is merged to main and PR 3 thresholds are
+   stable. See "CI workflow — deferred" above.
 
 ## Verification
 
 End-to-end checks before declaring Phase 1 complete:
 
 - `uv run pytest evals/ -v` passes locally against a real seeded DB
-- Manual `gh workflow run evals.yml` succeeds and uploads `results.json`
-- One golden entry intentionally given a wrong `ground_truth` → eval fails with
-  per-metric scores in the output (confirms scorers are wired)
-- A PR that modifies `rag/agent.py` triggers the workflow (confirms paths
-  filter)
-- A PR that modifies only `README.md` does NOT trigger the workflow (confirms
-  the filter is scoped, not a catch-all)
-- Weekly schedule fires (confirmed in Actions tab the following Monday)
-- evals/README.md walks a maintainer through: adding an entry, regenerating the
-  seed, running locally, interpreting results
+- `evals/baselines/` contains ≥3 `run-*.json` files captured from clean
+  local runs
+- The PR 3 threshold-derivation script reads them and emits
+  `mean − 1σ` per metric, written into `scoring.py`
+- One golden entry intentionally given a wrong `ground_truth` → eval fails
+  with per-metric scores in the output (confirms scorers are wired)
+- A locally-run failing entry trips the new hard floor (confirms PR 3
+  thresholds are wired)
+- evals/README.md walks a maintainer through: adding an entry, regenerating
+  the seed, running locally, snapshotting a baseline, interpreting results
+
+---
+
+## PR 1 complete — addendum for PR 2
+
+PR 1 shipped on branch `evals-phase1` (4 commits). The **plan above is now
+the original spec**; this addendum captures what actually landed and what
+PR 2 inherits. Read both before starting PR 2.
+
+> **Note (post-PR-2):** PR 2 has since shipped and the iteration plan above
+> has been revised — the GitHub Actions workflow (originally PR 3) is
+> deferred, and the thresholds PR (originally PR 4) is now PR 3. References
+> to "PR 3 (CI)" or "PR 4" within this addendum reflect the *original*
+> numbering and remain for historical accuracy.
+
+### Deviations from the original plan
+
+| Plan said | What shipped | Why |
+|---|---|---|
+| `eval_db_seed.sql` (pg_dump-style) | `eval_db_seed.jsonl` + asyncpg loader in `conftest.py` | SQL emission needed ~150 lines of escaping helpers (`_sql_str`, `_sql_vector`, `_sql_jsonb`); JSONL serializes natively and the loader is ~30 lines |
+| `evals/README.md` lands in PR 4 | Already in PR 1 | Maintainer-facing; cheap way to make the scaffolding self-explanatory |
+| Faithfulness extracts `retrieve` contexts only | Both `retrieve` *and* `query` returns fold into `contexts` | Without this, 4 of 5 PR-1 entries scored `faithfulness=0.0` (SQL-driven answers had no contexts to grade against). See `evals/harness.py:_extract_contexts_and_tools` |
+| `dataset.yaml` schema example only | 5 hand-authored entries with ground truths grounded in the seed | Per-entry ground truths must come from inspecting `eval_db_seed.jsonl`, not from the agent — the plan called this out, PR 1 followed it |
+| LLM judge mentioned generically | Wired via `langchain-anthropic` + `ragas.llms.LangchainLLMWrapper`; reads `EVAL_JUDGE_MODEL` (default `claude-haiku-4-5`) | Ragas ≥0.2 needs a `BaseRagasLLM`; the langchain wrapper is the path of least resistance |
+
+### Implementation decisions worth carrying into PR 2
+
+- **`EVAL_DATABASE_URL` skip-on-unset.** A bare `pytest evals/` from repo
+  root with no env set → all tests skip cleanly (no accidental hits to
+  prod). PR 3 (CI) will set this in the workflow `env:` block.
+- **Vector extension bootstrap.** `eval_pool` opens a one-shot connection
+  before pool creation to run `CREATE EXTENSION IF NOT EXISTS vector` —
+  required because the pool's `register_vector` init runs on every
+  connection acquire, including the one that would install the extension
+  via `SCHEMA_SQL`.
+- **JSONL loader uses an allowlist** of tables and columns
+  (`_ALLOWED_TABLES`, `_ALLOWED_COLUMNS` in `evals/conftest.py`) before
+  string-interpolating into INSERT statements. Neutralizes the S608
+  warning explicitly. Anything outside the allowlist raises — when PR 2
+  adds new columns to the seed, update both lists.
+- **`ragas==0.2.*` pinned** in `[dependency-groups] eval`. The 0.2 API
+  churn is real; don't bump without testing.
+- **Deferred imports of `rag.agent`** in `conftest.py` fixture bodies and
+  in `scoring.py` (TYPE_CHECKING-gated). This is what lets
+  `pytest --collect-only` work without `ANTHROPIC_API_KEY`. Don't
+  collapse those into top-level imports.
+- **`results.json` is gitignored**, written unconditionally by the
+  session-scoped `all_scores` fixture even on partial-failure runs.
+- **Action button ↔ dataset coupling.** Each `dataset.yaml` entry's
+  `query` field must match the corresponding production button text in
+  `config.py` / `.env.example`. If a button text changes, the dataset
+  entry's `query` must change with it. Documented in
+  `evals/README.md#action-buttons--dataset-coupling`.
+
+### Observations from PR 1's first end-to-end run
+
+Single run, frozen seed (kev=52, nvd=55, cwe=40), Claude Haiku as both
+agent and judge:
+
+| id | tool path | faithfulness |
+|---|---|---|
+| `cve_lookup_2026_25253` | query, query | 0.733 |
+| `latest_kev_additions`  | query | 0.977 |
+| `top_vendors_kev` | query | 0.643 |
+| `cwe_78` | query | **0.364** |
+| `log4j` | retrieve, query | 0.808 |
+
+- **`cwe_78` is a real product signal**, not a bug. The agent's answer
+  added an unsolicited `; rm -rf /` example and an external
+  cwe.mitre.org URL — neither in the SQL result. Faithfulness flagged
+  those as unsupported claims. Open question for PR 2: tune the system
+  prompt to discourage embellishment, or accept it as helpful
+  elaboration?
+- **All 5 entries hit `query` first.** The agent's system-prompt rules
+  ("for CVE ID lookups, query both KEV and NVD") direct it toward SQL
+  over semantic search. PR 2 entries that should hit `retrieve`
+  (`OpenClaw`, `VPN and remote access vulns`, `Network device vulns`,
+  `Microsoft product vulns`) will give us the first read on whether the
+  agent picks the right tool for each intent.
+- **Scores are non-deterministic** because the LLM judge is. The plan
+  calls for ≥3 baseline runs before setting thresholds in PR 4; PR 1
+  contributes the first.
+
+### PR 2 starting points
+
+#### The 10 entries to add
+
+Ordered by the production button list in `config.py` for traceability.
+Each maps 1:1 to a button:
+
+1. `ransomware_linked_vulns` — "Ransomware-linked vulns" (analytics,
+   query)
+2. `critical_vulns_active_exploits` — "Critical vulns with active
+   exploits" (analytics, query)
+3. `anthropic_claude` — "Anthropic Claude" (lookup, retrieve) — **see
+   open issue below**
+4. `openclaw` — "OpenClaw" (lookup, retrieve)
+5. `cve_2017_11882_refs` — "Reference URLs for CVE-2017-11882" (lookup,
+   query)
+6. `top_ai_vulns_2026` — "Top AI vulns in 2026" (analytics/lookup,
+   either)
+7. `vpn_remote_access_vulns` — "VPN and remote access vulns" (listing,
+   retrieve)
+8. `network_device_vulns` — "Network device vulns" (listing, retrieve)
+9. `microsoft_product_vulns` — "Microsoft product vulns" (listing,
+   retrieve)
+10. `top_cwe_by_avg_cvss` — "Top CWE categories by avg CVSS score"
+    (analytics, query)
+
+If any entry's ground truth needs data not in the current seed, add the
+relevant CVE-IDs / CWE-IDs to `SEED_CVE_IDS` / `SEED_CWES` in
+`evals/fixtures/build_seed.py`, regenerate, commit. Existing 50-row KEV
+slice + Log4j set should cover most.
+
+#### Adding the new metrics
+
+`scoring.py:METRICS` currently holds `[faithfulness]`. Add
+`context_recall` and `answer_correctness`:
+
+```python
+from ragas.metrics import answer_correctness, context_recall, faithfulness
+METRICS = [faithfulness, context_recall, answer_correctness]
+```
+
+Both new metrics work for every entry given Option A's context folding —
+no per-intent routing needed. What each adds:
+
+- `context_recall` — "of the claims in `reference` (ground_truth), what
+  fraction appear in `retrieved_contexts`?" Tests whether the tool
+  output *contained* the right information. Catches retrieval/query
+  gaps.
+- `answer_correctness` — compares `response` to `reference` directly
+  (factual + semantic similarity). Doesn't depend on `contexts`.
+  Catches "agent had the data but reasoned poorly."
+
+`test_offline_evals.py` already iterates over `METRIC_NAMES`, so the
+parametrized output and per-row guard will pick up the new metrics
+automatically. No assertion changes needed (PR 4 adds thresholds).
+
+#### Dataset schema implications
+
+The `expected_cve_ids` field in `dataset.yaml` is **not** what Ragas's
+`context_recall` consumes — Ragas uses `reference` (ground_truth). The
+field is a human-maintained recall hint, useful for debugging or for a
+custom metric later. Keep populating it where it's natural; don't
+contort it.
+
+### Open product questions PR 2 should resolve
+
+1. **"Anthropic Claude" button.** The bare button currently returns the
+   agent's intro message instead of vulnerability data; appending
+   "vulns" ("Anthropic Claude vulns") makes it work. Decide before
+   adding the dataset entry: change the button text in `config.py` /
+   `.env.example`, *or* fix the system prompt to handle bare entity
+   names. Either way, the dataset entry's `query` must match what the
+   button actually sends. Other buttons in the list (`OpenClaw`, vendor
+   names) may need the same fix.
+2. **Embellishment vs. helpfulness.** `cwe_78`'s 0.364 score reflects
+   the agent volunteering content not grounded in tool output. Is that
+   desirable? If yes, accept the lower faithfulness as the cost of
+   helpful elaboration. If no, tighten the system prompt and re-run to
+   confirm the score moves.
+
+### Files PR 2 will touch
+
+- `evals/dataset.yaml` — append 10 entries, possibly backfill
+  `expected_cve_ids` on existing 5
+- `evals/scoring.py` — add 2 metrics to `METRICS`
+- `evals/fixtures/build_seed.py` + `eval_db_seed.jsonl` — only if new
+  questions need data not in the current seed
+- `evals/conftest.py` `_ALLOWED_COLUMNS` — only if seed schema grows
+- `evals/README.md` — extend "Interpreting scores" with the two new
+  metrics
+- `config.py` / `.env.example` — only if the "Anthropic Claude" button
+  fix lives here
+
+No CI workflow yet (PR 3), no thresholds yet (PR 4).
+
+---
+
+## PR 3 complete — addendum and follow-ups
+
+PR 3 shipped on branch `evals-pr3`. Strawman floors (`faithfulness 0.80`,
+`context_recall 0.70`, `answer_correctness 0.60`) landed first as
+scaffolding; three local baselines were captured and committed under
+`evals/baselines/`; `evals/derive_thresholds.py` then computed
+`mean − 1σ` per metric and overwrote `evals/thresholds.py` with the
+derived values.
+
+### Derived floors (from 3 baselines)
+
+| metric | floor |
+|---|---:|
+| faithfulness | 0.6150 |
+| context_recall | 0.4800 |
+| answer_correctness | 0.4940 |
+
+Re-run `uv run python -m evals.derive_thresholds` for the audit table
+with mean/σ alongside.
+
+### Known stable failures (carry forward)
+
+Two entries fail the derived floors reproducibly across runs. Both are
+**real signal**, not judge noise — kept out of PR 3's scope on purpose
+(PR 3's job is to wire the regression detector, not fix what it finds).
+
+1. **`cwe_78` faithfulness ≈ 0.45–0.55 (floor 0.615).** Pre-registered
+   in the PR-1 addendum's "Open product questions" section under
+   *embellishment vs. helpfulness*: the agent answer adds an
+   unsolicited `; rm -rf /` example and a `cwe.mitre.org` URL not
+   grounded in the SQL result. Decision still open: tighten the system
+   prompt to discourage embellishment, or accept the lower score as the
+   cost of helpful elaboration. If accepting, document and add an
+   entry-level allowlist to `check_thresholds()`; if tightening, edit
+   the system prompt in `config.py` and re-derive baselines.
+2. **`network_device_vulns` context_recall = 0.375 deterministic (floor
+   0.480).** New finding in PR 3. Score is identical across runs, so
+   it's a retrieval gap, not judge variance — the tool calls aren't
+   surfacing the data the ground truth references. Diagnose with
+   `jq '.network_device_vulns | {tools_used, context_count, answer}'
+   evals/results.json` against the entry's `ground_truth` in
+   `dataset.yaml`. Likely culprits: missing vendor in the SQL filter
+   (Cisco/Juniper/Fortinet), semantic search returning unrelated
+   chunks, or a CVE in the ground truth that isn't in
+   `eval_db_seed.jsonl`.
+
+Both should land as separate fixes — neither requires re-deriving
+floors unless the ground truth itself is edited.
+
+### Floor tightness — observation for a future iteration
+
+`mean − 1σ` is, by construction, the floor that ~16% of a normal
+distribution sits below — at 15 entries × 3 metrics = 45 measurements
+per run, that's ~7 expected dips per run. Observed: 4–6 failures per
+run, with most non-reproducible. The floors behave exactly as the math
+predicts but make the suite a noise band more than a regression
+detector at `1σ`. A future iteration could:
+- Tighten to `mean − 2σ` (~2.5% expected, ~1 dip per run, much higher
+  signal-to-noise) — one-line change in `derive_thresholds.py`.
+- Or layer a per-entry override map for known-noisy entries.
+
+Out of scope for PR 3 — flagged here so it's not lost.
+
+### `answer_correctness` is not the noisiest metric
+
+The README claimed `answer_correctness` was the noisiest, based on PR-1
+data. Three baseline runs say otherwise: across 4–6 failures per run,
+none were `answer_correctness`. `faithfulness` and `context_recall`
+showed comparable run-to-run variance. README's "Known footguns"
+section could be updated to reflect this — minor doc fix, not blocking.
