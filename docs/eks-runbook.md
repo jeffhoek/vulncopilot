@@ -23,15 +23,18 @@ AWS EKS (myeks, us-east-2)
   └─ Namespace: rag
       ├─ Deployment: chainlit-rag (1 replica)
       ├─ Service: ClusterIP (port 80 → 8080)
-      └─ Ingress: ALB (internet-facing, sticky sessions)
-           ↓
+      └─ Ingress: ALB (internet-facing, HTTPS, sticky sessions)
+           ↓  (TLS via ACM cert; rag.manheok.com → ALB via Cloudflare DNS)
       Chainlit app (port 8080)
+        • GitHub OAuth login (no password auth)
         • Connects to managed Postgres (Supabase, pgvector) on startup
         • Read-only DB role; embeddings/queries served from pgvector
         • Pydantic AI agent → Claude (Anthropic)
 ```
 
 The knowledge base lives in a managed **Supabase Postgres** (the same database the Azure deployment uses), with embeddings stored in `pgvector`. The app connects with a **read-only** role via `PG_DATABASE_URL` and does not own the schema — the admin/ETL connection creates and loads it. See [supabase-readonly-role.md](supabase-readonly-role.md).
+
+Authentication is **GitHub OAuth** only (`@cl.oauth_callback`; there is no password login). That requires the app to be served over **HTTPS** at a real domain — Chainlit builds the OAuth `redirect_uri` from `CHAINLIT_URL`, and GitHub rejects an `http`/host mismatch. Here that's `https://rag.manheok.com`, with TLS terminated at the ALB using an ACM certificate and the hostname pointed at the ALB via Cloudflare DNS. OAuth provider setup and the authorization allow-list are covered in [public-access-setup.md](public-access-setup.md).
 
 ### Why 1 Replica?
 
@@ -255,9 +258,19 @@ openssl rand -hex 32            # → ADMIN_SECRET
 # PG_DATABASE_URL format: postgresql://USER:PASSWORD@HOST:5432/postgres
 ```
 
+- Create a **GitHub OAuth App** for this deployment (auth is OAuth-only). A classic
+  OAuth App has a single callback URL tied to one host, so the EKS app needs its
+  own — separate from the Azure one. In GitHub → Settings → Developer settings →
+  OAuth Apps → New OAuth App:
+  - Homepage URL: `https://rag.manheok.com`
+  - Authorization callback URL: `https://rag.manheok.com/auth/oauth/github/callback`
+
+  Copy the Client ID and generate a client secret. See [public-access-setup.md](public-access-setup.md).
+
 - Write each value into SSM Parameter Store as a `SecureString`
 ```bash
-for var in ANTHROPIC_API_KEY OPENAI_API_KEY APP_PASSWORD CHAINLIT_AUTH_SECRET ADMIN_SECRET PG_DATABASE_URL; do
+for var in ANTHROPIC_API_KEY OPENAI_API_KEY CHAINLIT_AUTH_SECRET ADMIN_SECRET \
+           OAUTH_GITHUB_CLIENT_ID OAUTH_GITHUB_CLIENT_SECRET PG_DATABASE_URL; do
   echo "$var" && read -rs val
   aws ssm put-parameter --name "/rag/$var" --value "$val" --type SecureString --overwrite --region us-east-2
 done
@@ -281,6 +294,37 @@ kubectl get secret rag-secrets -n rag           # ESO-managed; should now exist
 > The plain `kubectl create secret` flow (and [k8s/secret.yaml.example](../k8s/secret.yaml.example))
 > remains documented as a fallback, but ESO/SSM is the path used here — do not
 > create `rag-secrets` manually, or ESO (`creationPolicy: Owner`) will fight it.
+
+### Step 7 — Public domain + TLS (required for OAuth)
+
+GitHub OAuth needs the app on **HTTPS at a real hostname**. TLS is terminated at
+the ALB with an ACM certificate; the hostname (`rag.manheok.com`) resolves to the
+ALB via Cloudflare DNS. The `k8s/ingress.yaml` already carries the
+`certificate-arn`, an `HTTPS:443` listener, `ssl-redirect`, and the `host` rule;
+`CHAINLIT_URL` and `ALLOWED_LOGINS` are set in `k8s/configmap.yaml`.
+
+- Request a public ACM certificate **in `us-east-2`** (the ALB's region):
+```bash
+aws acm request-certificate --domain-name rag.manheok.com \
+  --validation-method DNS --region us-east-2
+```
+
+- Add the DNS validation record in **Cloudflare** as a `CNAME`, **Proxy status =
+  DNS only (grey cloud)** — a proxied record breaks ACM validation. Get it with:
+```bash
+aws acm describe-certificate --certificate-arn <arn> --region us-east-2 \
+  --query 'Certificate.DomainValidationOptions[0].ResourceRecord' --output table
+```
+  Wait until the cert is `ISSUED` (`...--query 'Certificate.Status' --output text`).
+  Put its ARN in `k8s/ingress.yaml` (`certificate-arn`).
+
+- The app `CNAME` (`rag` → the ALB hostname) is added **after** the deploy creates
+  the ALB — see Post-Deploy Verification. Keep it **DNS only (grey cloud)** too, so
+  clients reach the ALB directly and get the ACM cert (a proxied record would put
+  Cloudflare's TLS in front and need SSL mode "Full").
+
+> **Cert must be `ISSUED` before the deploy.** The AWS Load Balancer Controller
+> can't attach a still-`PENDING_VALIDATION` cert to the HTTPS listener.
 
 ---
 
@@ -313,20 +357,26 @@ kubectl get pods -n rag -w
 kubectl logs -n rag deploy/chainlit-rag --follow
 ```
 
-- Get the ALB hostname from the `HOSTS` column
+- Get the ALB hostname from the `ADDRESS` column
 ```bash
 kubectl get ingress -n rag
 ```
 
-- Confirm the app is healthy
+- Point DNS at it: add a `CNAME` in **Cloudflare**, `rag` → the ALB hostname,
+  **Proxy status = DNS only (grey cloud)**. Wait for it to resolve:
 ```bash
-curl http://<alb-hostname>/healthz
+dig +short rag.manheok.com
+```
+
+- Confirm the app is healthy over HTTPS (once DNS resolves and the cert is attached)
+```bash
+curl https://rag.manheok.com/healthz
 # Expected: {"status":"ok"}
 ```
 
-- Open in browser — log in with `APP_USERNAME` / `APP_PASSWORD`
+- Open in browser and log in with **GitHub** (the account must be on `ALLOWED_LOGINS`)
 ```bash
-open http://<alb-hostname>
+open https://rag.manheok.com
 ```
 
 ---
@@ -372,6 +422,13 @@ Common causes:
 - **`PG_DATABASE_URL` wrong or unreachable** — verify the read-only Supabase DSN, and that Supabase network restrictions allow connections from the cluster's egress.
 - **`ADMIN_SECRET` unset** — the app fails fast at startup; confirm it's in `rag-secrets`.
 - **`DB_INIT_SCHEMA` not `false`** — a read-only role can't run schema DDL, so the app errors on startup if it tries. Confirm the ConfigMap sets `DB_INIT_SCHEMA: "false"`.
+- **`You must set the environment variable for at least one oauth provider`** — `OAUTH_GITHUB_CLIENT_ID`/`_SECRET` didn't reach the pod. Check the `ExternalSecret` synced them (`kubectl get secret rag-secrets -n rag -o jsonpath='{.data.OAUTH_GITHUB_CLIENT_ID}'`) and that the SSM params exist.
+
+### OAuth login fails (redirect/denied)
+
+- **GitHub error "redirect_uri is not associated with this application"** — the OAuth App's callback URL must be exactly `https://rag.manheok.com/auth/oauth/github/callback`, and `CHAINLIT_URL` must be `https://rag.manheok.com`. A trailing-slash or `http` mismatch fails here.
+- **Login succeeds at GitHub but the app rejects you** — your GitHub username isn't on `ALLOWED_LOGINS` (or set `OPEN_REGISTRATION=true`). Check the pod log for `OAuth denied: ...`.
+- **Browser cert warning / TLS errors** — the ACM cert isn't `ISSUED` or attached. Confirm `aws acm describe-certificate ... Status` is `ISSUED` and the ALB has an HTTPS:443 listener (`kubectl describe ingress -n rag`).
 
 ### Image pull errors
 
@@ -420,16 +477,18 @@ kubectl scale deployment chainlit-rag -n rag --replicas=2
 |----------|-------------|
 | `ANTHROPIC_API_KEY` | Anthropic Claude API key |
 | `OPENAI_API_KEY` | OpenAI API key for embeddings |
-| `APP_PASSWORD` | Chainlit login password |
 | `CHAINLIT_AUTH_SECRET` | Chainlit session signing secret (`chainlit create-secret`) |
 | `ADMIN_SECRET` | HTTP Basic password for `/admin`; app fails fast if unset (`openssl rand -hex 32`) |
+| `OAUTH_GITHUB_CLIENT_ID` | GitHub OAuth App client ID |
+| `OAUTH_GITHUB_CLIENT_SECRET` | GitHub OAuth App client secret |
 | `PG_DATABASE_URL` | Read-only Supabase DSN (same DB as the Azure deployment) |
 
 ### Stored as Kubernetes ConfigMap (`rag-config`)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `APP_USERNAME` | `admin` | Chainlit login username |
+| `CHAINLIT_URL` | `https://rag.manheok.com` | Public HTTPS origin; Chainlit builds the OAuth `redirect_uri` from it |
+| `ALLOWED_LOGINS` | `["jeffhoek"]` | GitHub usernames admitted by the OAuth callback (JSON array) |
 | `DB_INIT_SCHEMA` | `false` | Read-only role — skip schema DDL (owned by admin/ETL connection) |
 | `LLM_MODEL` | `anthropic:claude-haiku-4-5-20251001` | Pydantic AI model string |
 | `TOP_K` | `5` | Number of chunks returned by RAG retrieval |

@@ -91,12 +91,20 @@ echo "Account: $ACCOUNT_ID  Region: $REGION  Cluster: $CLUSTER"
   `ssm:GetParameter`, `ssm:GetParametersByPath`, and `kms:Decrypt` on the
   SecureString KMS key.
 
+- [ ] **GitHub OAuth App** (auth is OAuth-only; needs its own app — one callback per app)
+  - GitHub → Settings → Developer settings → OAuth Apps → New OAuth App
+  - Homepage: `https://rag.manheok.com`
+  - Callback: `https://rag.manheok.com/auth/oauth/github/callback`
+  - Copy Client ID + generate a client secret.
+
 - [ ] **Step 6 — Write secrets to SSM Parameter Store** (`/rag/*`, SecureString)
   ```bash
-  # CHAINLIT_AUTH_SECRET: uv run chainlit create-secret
-  # ADMIN_SECRET:         openssl rand -hex 32
-  # PG_DATABASE_URL:      read-only Supabase DSN (same as Azure 'database-url-readonly')
-  for var in ANTHROPIC_API_KEY OPENAI_API_KEY APP_PASSWORD CHAINLIT_AUTH_SECRET ADMIN_SECRET PG_DATABASE_URL; do
+  # CHAINLIT_AUTH_SECRET:        uv run chainlit create-secret
+  # ADMIN_SECRET:                openssl rand -hex 32
+  # OAUTH_GITHUB_CLIENT_ID/_SECRET: from the GitHub OAuth App above
+  # PG_DATABASE_URL:             read-only Supabase DSN (same as Azure 'database-url-readonly')
+  for var in ANTHROPIC_API_KEY OPENAI_API_KEY CHAINLIT_AUTH_SECRET ADMIN_SECRET \
+             OAUTH_GITHUB_CLIENT_ID OAUTH_GITHUB_CLIENT_SECRET PG_DATABASE_URL; do
     echo "$var" && read -rs val
     aws ssm put-parameter --name "/rag/$var" --value "$val" \
       --type SecureString --overwrite --region $REGION
@@ -117,7 +125,19 @@ echo "Account: $ACCOUNT_ID  Region: $REGION  Cluster: $CLUSTER"
       gateway, a different IP than Azure App Service. If Supabase restricts inbound
       by IP, add the NAT gateway IP or the pod gets `connection refused`.
 
-> **No Step 7.** Pod Identity / S3 IAM role is gone — the app uses Postgres, not AWS data services.
+- [ ] **Step 7 — TLS cert for `rag.manheok.com`** (OAuth requires HTTPS)
+  ```bash
+  aws acm request-certificate --domain-name rag.manheok.com \
+    --validation-method DNS --region $REGION
+  # add the validation CNAME in Cloudflare (DNS only / grey cloud), then:
+  aws acm describe-certificate --certificate-arn <arn> --region $REGION \
+    --query 'Certificate.Status' --output text     # wait for ISSUED
+  ```
+  Put the ARN in `k8s/ingress.yaml` (`certificate-arn`). `CHAINLIT_URL` and
+  `ALLOWED_LOGINS` are already set in `k8s/configmap.yaml`. **Cert must be
+  ISSUED before the deploy** or the ALB can't attach it to the HTTPS listener.
+
+> **No S3 Step.** Pod Identity / S3 IAM role is gone — the app uses Postgres, not AWS data services.
 
 ---
 
@@ -140,15 +160,25 @@ echo "Account: $ACCOUNT_ID  Region: $REGION  Cluster: $CLUSTER"
   ```bash
   kubectl get pods -n rag -w
   kubectl logs -n rag deploy/chainlit-rag --follow
-  kubectl get ingress -n rag                 # grab ALB hostname
-  curl http://<alb-hostname>/healthz         # expect {"status":"ok"}
+  kubectl get ingress -n rag                 # grab the ALB hostname from ADDRESS
   ```
+
+- [ ] **Point DNS at the ALB** — Cloudflare `CNAME rag → <alb-hostname>`, **DNS only (grey cloud)**
+  ```bash
+  dig +short rag.manheok.com
+  curl https://rag.manheok.com/healthz       # expect {"status":"ok"}
+  ```
+
+- [ ] **Log in** — open `https://rag.manheok.com`, sign in with a GitHub account on `ALLOWED_LOGINS`.
 
 ---
 
 ## Most likely snags
 
 1. **ExternalSecret not `SecretSynced`** — `rag-secrets` never gets created, so pods hang in `ContainerCreating`. Usually a missing SSM param, the ESO role lacking `ssm:Get*`/`kms:Decrypt`, or a `ClusterSecretStore` that isn't `Valid`. Check `kubectl describe externalsecret rag-secrets -n rag`.
-2. **`PG_DATABASE_URL` unreachable** — wrong DSN, or Supabase IP allow-list missing the cluster NAT IP.
-3. **`ADMIN_SECRET` unset** — app fails fast at startup (`config.py` enforces it).
-4. **AWS Load Balancer Controller missing** — deploy looks "successful" but the app is unreachable (no ALB hostname).
+2. **`You must set the environment variable for at least one oauth provider`** — `OAUTH_GITHUB_CLIENT_ID`/`_SECRET` missing from SSM or not synced.
+3. **OAuth `redirect_uri` mismatch** — the GitHub OAuth App callback must exactly equal `https://rag.manheok.com/auth/oauth/github/callback`, and `CHAINLIT_URL` must match.
+4. **Login denied after GitHub** — your username isn't in `ALLOWED_LOGINS` (or set `OPEN_REGISTRATION=true`); look for `OAuth denied:` in the pod log.
+5. **`PG_DATABASE_URL` unreachable** — wrong DSN, or Supabase IP allow-list missing the cluster NAT IP.
+6. **Cert not `ISSUED` before deploy** — the ALB can't attach a pending cert; the ingress gets no HTTPS listener.
+7. **AWS Load Balancer Controller missing** — deploy looks "successful" but the app is unreachable (no ALB hostname).
