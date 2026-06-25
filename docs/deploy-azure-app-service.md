@@ -144,15 +144,40 @@ these the same way (Pipelines → Edit → Variables → New variable):
 | `ETL_EMAIL_TO` | `you@example.com` | Recipient(s) of the ETL results email (comma-separated). Empty = no email. |
 | `ADMIN_USER_IDENTIFIERS` | `["github:12345678"]` | GitHub identifiers granted the elevated rate-limit cap. **Must be valid JSON** (`[]` for none). |
 
-> These are optional. `azure-pipelines.yml` defines a safe default for each in its
-> `variables:` block (`''` for the email, `'[]'` for admins), so leaving them unset
-> deploys cleanly. A variable you add in the UI **overrides** that default. For
-> `ADMIN_USER_IDENTIFIERS`, set valid JSON (`[]` for none) — the deploy reads the
-> value from the variable's **environment variable** (quoted), not a `$(...)` macro,
-> because a macro is substituted as literal text and bash strips the JSON's own
-> double-quotes. The app also now treats a blank value as `[]` rather than crashing,
-> so an empty UI variable is tolerated — but a non-empty *invalid* value (e.g.
-> `[github:1]` with the quotes lost) still fails fast at startup.
+> These are optional and supplied **only** as UI variables — they are deliberately
+> *not* declared in `azure-pipelines.yml`'s `variables:` block. **A variable defined
+> at the YAML root overrides a UI variable of the same name** (a notorious Azure
+> DevOps gotcha), so a YAML default would permanently shadow your UI value — e.g.
+> `ETL_EMAIL_TO` would always deploy empty and the ETL email would never send, no
+> matter what you set in the UI. The safe default for the *unset* case is instead
+> applied in the deploy step's inline script, which coerces an undefined variable's
+> literal `$(NAME)` expansion to `''` / `[]`. For `ADMIN_USER_IDENTIFIERS`, set valid
+> JSON (`[]` for none) — the deploy reads the value from the variable's **environment
+> variable** (quoted), not a `$(...)` macro, because a macro is substituted as literal
+> text and bash strips the JSON's own double-quotes. The app also treats a blank value
+> as `[]` rather than crashing, so an empty variable is tolerated — but a non-empty
+> *invalid* value (e.g. `[github:1]` with the quotes lost) still fails fast at startup.
+
+> ⚠️ **These variables only take effect on an infra deploy.** They are baked into
+> the resources (the Container Apps Job's env, the app's settings) by the
+> **DeployInfra** stage's bicep — they are *not* read at runtime. Adding or changing
+> a variable in the ADO UI does **nothing** to already-deployed resources until
+> DeployInfra runs again and re-applies the bicep. So if you set `ETL_EMAIL_TO`
+> after the job was last deployed, the live job keeps its old (empty) value and the
+> ETL run logs `Email not configured … skipping` even though the variable is set.
+> Confirm what the **live job** actually has — this is ground truth, not the pipeline:
+>
+> ```bash
+> az containerapp job show -n job-chainlit-rag-etl-dev -g rg-chainlit-rag-dev \
+>   --query "properties.template.containers[0].env[?name=='ETL_EMAIL_TO']" -o json
+> ```
+>
+> **Watch out for the path filters:** `azure-pipelines.yml`'s trigger excludes
+> `docs/**`, `*.md`, `k8s/**`, and `.github/**`, so a docs- or EKS-only commit will
+> **not** fire the pipeline and your new variable will never reach the job. After
+> changing one of these variables, force a deploy: **Run pipeline** manually on
+> `main` (path filters apply only to automatic CI triggers, not manual runs), or
+> push a change that touches a non-excluded path.
 
 ### 2.4 Create the Deployment Environment
 
