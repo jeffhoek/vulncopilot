@@ -269,7 +269,7 @@ openssl rand -hex 32            # → ADMIN_SECRET
 
 - Write each value into SSM Parameter Store as a `SecureString`
 ```bash
-for var in ANTHROPIC_API_KEY OPENAI_API_KEY CHAINLIT_AUTH_SECRET ADMIN_SECRET \
+for var in ANTHROPIC_API_KEY OPENAI_API_KEY CHAINLIT_AUTH_SECRET ADMIN_SECRET MCP_API_KEY \
            OAUTH_GITHUB_CLIENT_ID OAUTH_GITHUB_CLIENT_SECRET PG_DATABASE_URL; do
   echo "$var" && read -rs val
   aws ssm put-parameter --name "/rag/$var" --value "$val" --type SecureString --overwrite --region us-east-2
@@ -285,7 +285,9 @@ kubectl get secret rag-secrets -n rag           # ESO-managed; should now exist
 ```
 
 > `ADMIN_SECRET` guards the `/admin` dashboard — the app **fails fast at
-> startup if it is unset**.
+> startup if it is unset**. `MCP_API_KEY` authenticates the `/mcp` endpoint;
+> if unset, `/mcp` is **publicly UNAUTHENTICATED** (it's reachable through the
+> ALB), so set it before exposing the app. Generate either with `openssl rand -hex 32`.
 >
 > `DB_INIT_SCHEMA=false` is set in the ConfigMap (Step earlier): the live app
 > uses a read-only role and must not run schema DDL — the admin/ETL connection
@@ -479,6 +481,7 @@ kubectl scale deployment chainlit-rag -n rag --replicas=2
 | `OPENAI_API_KEY` | OpenAI API key for embeddings |
 | `CHAINLIT_AUTH_SECRET` | Chainlit session signing secret (`chainlit create-secret`) |
 | `ADMIN_SECRET` | HTTP Basic password for `/admin`; app fails fast if unset (`openssl rand -hex 32`) |
+| `MCP_API_KEY` | Authenticates the `/mcp` endpoint; if unset, `/mcp` is publicly unauthenticated (`openssl rand -hex 32`) |
 | `OAUTH_GITHUB_CLIENT_ID` | GitHub OAuth App client ID |
 | `OAUTH_GITHUB_CLIENT_SECRET` | GitHub OAuth App client secret |
 | `PG_DATABASE_URL` | Read-only Supabase DSN (same DB as the Azure deployment) |
