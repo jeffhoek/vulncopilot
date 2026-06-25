@@ -4,7 +4,17 @@ metadata:
   name: rag-config
   namespace: rag
 data:
-  APP_USERNAME: "admin"
+  # Auth is GitHub OAuth (app.py @cl.oauth_callback) — there is no password login.
+  # CHAINLIT_URL must be the public HTTPS URL so Chainlit builds the OAuth
+  # redirect_uri as https; behind the ALB it otherwise defaults to http and
+  # GitHub rejects the mismatch. The GitHub OAuth App's callback must be
+  # <CHAINLIT_URL>/auth/oauth/github/callback. See docs/public-access-setup.md.
+  CHAINLIT_URL: "https://rag.manheok.com"
+  # Authorization allow-list (JSON arrays). A user is admitted if any match.
+  ALLOWED_LOGINS: '["jeffhoek"]'   # GitHub usernames admitted to the app
+  # ALLOWED_EMAILS: '[]'      # explicit emails
+  # ALLOWED_EMAIL_DOMAINS: '[]'
+  # OPEN_REGISTRATION: "false" # "true" = any GitHub user allowed
   LLM_MODEL: "anthropic:claude-haiku-4-5-20251001"
   TOP_K: "5"
   SYSTEM_PROMPT: >-
