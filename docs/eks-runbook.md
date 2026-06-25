@@ -19,7 +19,7 @@ GitHub (push to main)
   • Rolling update with new image
   • Wait for rollout (120s timeout)
     ↓
-AWS EKS (eks-proto, us-east-2)
+AWS EKS (myeks, us-east-2)
   └─ Namespace: rag
       ├─ Deployment: chainlit-rag (1 replica)
       ├─ Service: ClusterIP (port 80 → 8080)
@@ -58,7 +58,7 @@ Chainlit uses WebSockets. The ALB is configured with:
 
 ### AWS Requirements
 
-- EKS cluster `eks-proto` is **ACTIVE** in `us-east-2`
+- EKS cluster `myeks` is **ACTIVE** in `us-east-2`
 - ECR repository `chainlit-pydanticai-rag` exists (created in setup below)
 - AWS CLI configured with sufficient permissions for setup steps
 
@@ -201,7 +201,7 @@ Add the IAM role to the EKS cluster's `aws-auth` ConfigMap, mapping it to a Kube
 
 ```bash
 eksctl create iamidentitymapping \
-  --cluster eks-proto \
+  --cluster myeks \
   --region us-east-2 \
   --arn arn:aws:iam::${ACCOUNT_ID}:role/github-actions-chainlit-rag \
   --username github-actions \
@@ -213,8 +213,8 @@ eksctl create iamidentitymapping \
 ### Step 6 — Create the Kubernetes Namespace and Secrets
 
 ```bash
-# Update your kubeconfig to point at eks-proto
-aws eks update-kubeconfig --name eks-proto --region us-east-2
+# Update your kubeconfig to point at myeks
+aws eks update-kubeconfig --name myeks --region us-east-2
 ```
 
 - Create the `rag` namespace in the cluster
@@ -325,7 +325,7 @@ Link the `chainlit-rag` Kubernetes ServiceAccount (applied in Step 6) to the IAM
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
 aws eks create-pod-identity-association \
-  --cluster-name eks-proto \
+  --cluster-name myeks \
   --region us-east-2 \
   --namespace rag \
   --service-account chainlit-rag \

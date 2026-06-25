@@ -6,6 +6,9 @@ trigger:
     exclude:
       - docs/**
       - '*.md'
+      # EKS-only artifacts — iterating on these should not fire the Azure pipeline
+      - k8s/**
+      - .github/**
 
 pr: none
 
