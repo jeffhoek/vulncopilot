@@ -20,12 +20,13 @@ variables:
   appServiceName: app-chainlit-rag-dev
   azureServiceConnection: azure-chainlit-rag
   githubServiceConnection: github-chainlit-rag
-  # Safe defaults for personal/env-specific deploy values. Without these, an
-  # undefined pipeline (UI) variable is passed through literally as "$(NAME)",
-  # which lands in an app setting and crash-loops startup (invalid JSON / address).
-  # A variable set in Pipelines → Edit → Variables overrides the default here.
-  ETL_EMAIL_TO: ''
-  ADMIN_USER_IDENTIFIERS: '[]'
+  # NOTE: personal/env-specific values (ETL_EMAIL_TO, ADMIN_USER_IDENTIFIERS) are
+  # intentionally NOT declared here. A variable defined at the YAML root OVERRIDES a
+  # Pipelines → Edit → Variables (UI) variable of the same name, so a default here
+  # would permanently shadow the UI value (e.g. ETL_EMAIL_TO would always deploy
+  # empty and the ETL email would never send). They are supplied only via the UI and
+  # consumed below, where the inline script supplies the safe default for the unset
+  # case (an undefined UI variable expands literally to "$(NAME)").
 
 stages:
   # ─────────────────────────────────────────────────────────────
@@ -123,11 +124,10 @@ stages:
 
                 - task: AzureCLI@2
                   displayName: Bicep what-if (dry run)
-                  # Map the pipeline variables into the task env via $(...) macros, which
-                  # resolve with full precedence (a UI variable overrides the YAML default).
-                  # The auto-exposed env var for a YAML-block variable does NOT pick up the
-                  # UI override, so referencing $ETL_EMAIL_TO directly would read the empty
-                  # YAML default. The agent assigns these env values directly (no shell
+                  # Map the UI (Pipelines → Edit → Variables) variables into the task env via
+                  # $(...) macros. These vars are NOT declared in the YAML `variables:` block —
+                  # a root-level YAML variable overrides the UI one, which would permanently
+                  # shadow the UI value. The agent assigns these env values directly (no shell
                   # re-parsing), so a JSON array's double-quotes survive intact.
                   env:
                     ETL_EMAIL_TO: $(ETL_EMAIL_TO)
@@ -137,18 +137,27 @@ stages:
                     scriptType: bash
                     scriptLocation: inlineScript
                     inlineScript: |
+                      # An unset UI variable reaches the agent as the literal macro text, not a
+                      # value. Validate by shape and fall back to the safe default: a real
+                      # recipient contains "@" (else no email); a real admin list is a JSON array
+                      # "[...]" (else none). Note: do NOT compare against a "$(NAME)" literal here —
+                      # the agent macro-expands $(...) in the script body before bash runs it, so a
+                      # validly-set value would match its own sentinel and be wiped.
+                      email_to="$ETL_EMAIL_TO"; case "$email_to" in *@*) ;; *) email_to='' ;; esac
+                      admins="$ADMIN_USER_IDENTIFIERS"; case "$admins" in \[*\]) ;; *) admins='[]' ;; esac
                       az deployment group what-if \
                         --resource-group $(resourceGroup) \
                         --template-file infra/main.bicep \
                         --parameters infra/parameters.dev.bicepparam \
                         --parameters pipelineServicePrincipalObjectId=$(PIPELINE_SP_OBJECT_ID) \
-                        --parameters etlEmailTo="$ETL_EMAIL_TO" \
-                        --parameters adminUserIdentifiers="$ADMIN_USER_IDENTIFIERS"
+                        --parameters etlEmailTo="$email_to" \
+                        --parameters adminUserIdentifiers="$admins"
 
                 - task: AzureCLI@2
                   displayName: Bicep deploy (incremental)
-                  # See the what-if step above: env: maps the UI-overridable macro values in,
-                  # the script reads them quoted so JSON quotes are preserved.
+                  # See the what-if step above: the UI variables are mapped in via env: (they are
+                  # deliberately not in the YAML `variables:` block, which would shadow them), and
+                  # the script coerces an unset variable's literal "$(NAME)" to the safe default.
                   env:
                     ETL_EMAIL_TO: $(ETL_EMAIL_TO)
                     ADMIN_USER_IDENTIFIERS: $(ADMIN_USER_IDENTIFIERS)
@@ -157,13 +166,18 @@ stages:
                     scriptType: bash
                     scriptLocation: inlineScript
                     inlineScript: |
+                      # Same shape-based validation as the what-if step (see its comment): "@" for
+                      # a recipient, "[...]" for the admin list, else the safe default. Avoid any
+                      # "$(NAME)" literal — the agent would macro-expand it and wipe a set value.
+                      email_to="$ETL_EMAIL_TO"; case "$email_to" in *@*) ;; *) email_to='' ;; esac
+                      admins="$ADMIN_USER_IDENTIFIERS"; case "$admins" in \[*\]) ;; *) admins='[]' ;; esac
                       az deployment group create \
                         --resource-group $(resourceGroup) \
                         --template-file infra/main.bicep \
                         --parameters infra/parameters.dev.bicepparam \
                         --parameters pipelineServicePrincipalObjectId=$(PIPELINE_SP_OBJECT_ID) \
-                        --parameters etlEmailTo="$ETL_EMAIL_TO" \
-                        --parameters adminUserIdentifiers="$ADMIN_USER_IDENTIFIERS" \
+                        --parameters etlEmailTo="$email_to" \
+                        --parameters adminUserIdentifiers="$admins" \
                         --mode Incremental
 
   # ─────────────────────────────────────────────────────────────
