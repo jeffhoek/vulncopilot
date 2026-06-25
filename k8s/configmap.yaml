@@ -11,7 +11,7 @@ data:
   # <CHAINLIT_URL>/auth/oauth/github/callback. See docs/public-access-setup.md.
   CHAINLIT_URL: "https://rag.manheok.com"
   # Authorization allow-list (JSON arrays). A user is admitted if any match.
-  ALLOWED_LOGINS: '[]'        # GitHub usernames, e.g. ["jeffhoek"]
+  ALLOWED_LOGINS: '["jeffhoek"]'   # GitHub usernames admitted to the app
   # ALLOWED_EMAILS: '[]'      # explicit emails
   # ALLOWED_EMAIL_DOMAINS: '[]'
   # OPEN_REGISTRATION: "false" # "true" = any GitHub user allowed
