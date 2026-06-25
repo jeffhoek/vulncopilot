@@ -7,9 +7,9 @@ metadata:
     # Internet-facing ALB with IP target type (routes directly to pod IPs)
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
-    # TLS: ACM cert (us-east-2) for rag.jeffreyhoekman.com; HTTPS required for
+    # TLS: ACM cert (us-east-2) for rag.manheok.com; HTTPS required for
     # GitHub OAuth (CHAINLIT_URL is https). Redirect all HTTP to HTTPS.
-    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-2:958170895933:certificate/1af36627-b3f8-4572-a17d-baad76ac900f
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-2:958170895933:certificate/4d8e3a34-3ca5-4e13-b11f-98a4a07dd94a
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
     alb.ingress.kubernetes.io/ssl-redirect: '443'
     # 600s idle timeout exceeds Chainlit's WebSocket keep-alive to prevent mid-chat disconnects
@@ -20,7 +20,7 @@ metadata:
 spec:
   ingressClassName: alb
   rules:
-    - host: rag.jeffreyhoekman.com
+    - host: rag.manheok.com
       http:
         paths:
           - path: /

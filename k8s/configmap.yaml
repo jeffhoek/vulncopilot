@@ -9,7 +9,7 @@ data:
   # redirect_uri as https; behind the ALB it otherwise defaults to http and
   # GitHub rejects the mismatch. The GitHub OAuth App's callback must be
   # <CHAINLIT_URL>/auth/oauth/github/callback. See docs/public-access-setup.md.
-  CHAINLIT_URL: "https://rag.jeffreyhoekman.com"
+  CHAINLIT_URL: "https://rag.manheok.com"
   # Authorization allow-list (JSON arrays). A user is admitted if any match.
   ALLOWED_LOGINS: '[]'        # GitHub usernames, e.g. ["jeffhoek"]
   # ALLOWED_EMAILS: '[]'      # explicit emails
