@@ -100,10 +100,10 @@ echo "Account: $ACCOUNT_ID  Region: $REGION  Cluster: $CLUSTER"
 - [ ] **Step 6 — Write secrets to SSM Parameter Store** (`/rag/*`, SecureString)
   ```bash
   # CHAINLIT_AUTH_SECRET:        uv run chainlit create-secret
-  # ADMIN_SECRET:                openssl rand -hex 32
+  # ADMIN_SECRET, MCP_API_KEY:   openssl rand -hex 32   (MCP_API_KEY auths /mcp; unset = public)
   # OAUTH_GITHUB_CLIENT_ID/_SECRET: from the GitHub OAuth App above
   # PG_DATABASE_URL:             read-only Supabase DSN (same as Azure 'database-url-readonly')
-  for var in ANTHROPIC_API_KEY OPENAI_API_KEY CHAINLIT_AUTH_SECRET ADMIN_SECRET \
+  for var in ANTHROPIC_API_KEY OPENAI_API_KEY CHAINLIT_AUTH_SECRET ADMIN_SECRET MCP_API_KEY \
              OAUTH_GITHUB_CLIENT_ID OAUTH_GITHUB_CLIENT_SECRET PG_DATABASE_URL; do
     echo "$var" && read -rs val
     aws ssm put-parameter --name "/rag/$var" --value "$val" \
