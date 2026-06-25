@@ -32,6 +32,17 @@ A `/admin` page (HTTP Basic Auth) showing per-user query volume, token usage,
 and estimated LLM cost. Partially satisfies **Cost Tracking** below — the
 remaining gap is per-query attribution rather than per-user/day aggregates.
 
+### Automated ETL Scheduling ✅
+
+KEV and NVD loaders now run unattended on a cron schedule via an **Azure
+Container Apps Job** (`job-chainlit-rag-etl-<env>`), reusing the app image and
+pulling secrets from Key Vault via managed identity. Cadence is set by
+`etlCronExpression` in `infra/parameters.dev.bicepparam`. See
+[Scheduled ETL Refresh](../docs/deploy-azure-app-service.md#scheduled-etl-refresh-container-apps-job).
+The remaining gap is the **data freshness indicator** in the UI / API
+responses ("KEV last synced: 4 hours ago") — the scheduling half is done; the
+surfacing half is not.
+
 ## High Priority — Production-Readiness
 
 ### SSVC Integration *(plan: [ssvc-affected-integration.md](ssvc-affected-integration.md))*
@@ -150,7 +161,7 @@ Risk Score (rank what's worth patching first).
 Subscribe to alerts when new KEV entries match specific criteria such as vendor,
 product, or severity threshold.
 
-### Evaluation Framework
+### Evaluation Framework *(in flight: PR [#65](https://github.com/jeffhoek/chainlit-pydanticai-postgres/pull/65))*
 
 Build a test suite of question/answer pairs to systematically measure and track
 retrieval quality and agent accuracy over time. Approach in two phases:
@@ -162,13 +173,6 @@ retrieval quality and agent accuracy over time. Approach in two phases:
 - **Online evals via Logfire**: once the offline baseline is established,
   sample production queries and score grounding and domain relevance directly
   in Logfire to catch regressions in live traffic.
-
-### Automated ETL Scheduling
-
-Run KEV and NVD data loaders on a recurring schedule (e.g., daily cron) so the
-database stays current without manual intervention. Surface a data freshness
-indicator in the UI and API responses (e.g., "KEV last synced: 4 hours ago") so
-users can trust the currency of results without checking logs.
 
 ### Persistent Conversation History
 
