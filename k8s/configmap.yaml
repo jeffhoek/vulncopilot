@@ -26,6 +26,7 @@ data:
     "Microsoft product vulns",
     "Top vendors in KEV",
     "Top CWE categories by avg CVSS score"]
-  PG_HOST: "your-tigerdata-endpoint.tsdb.cloud.timescale.com"
-  PG_PORT: "5432"
-  PG_DATABASE: "inventory"
+  # The live app connects with a read-only Supabase role via PG_DATABASE_URL
+  # (in the rag-secrets secret), so it must not run schema DDL — that's owned
+  # by the admin/ETL connection. See docs/supabase-readonly-role.md.
+  DB_INIT_SCHEMA: "false"

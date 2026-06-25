@@ -26,21 +26,22 @@ AWS EKS (myeks, us-east-2)
       └─ Ingress: ALB (internet-facing, sticky sessions)
            ↓
       Chainlit app (port 8080)
-        • Loads knowledge base from S3 on startup
-        • Generates embeddings (OpenAI)
-        • In-memory vector store (NumPy)
+        • Connects to managed Postgres (Supabase, pgvector) on startup
+        • Read-only DB role; embeddings/queries served from pgvector
         • Pydantic AI agent → Claude (Anthropic)
 ```
 
+The knowledge base lives in a managed **Supabase Postgres** (the same database the Azure deployment uses), with embeddings stored in `pgvector`. The app connects with a **read-only** role via `PG_DATABASE_URL` and does not own the schema — the admin/ETL connection creates and loads it. See [supabase-readonly-role.md](supabase-readonly-role.md).
+
 ### Why 1 Replica?
 
-The vector store is held in memory per-pod. Multiple pods would each hold an independent copy — acceptable with ALB sticky sessions — but starting with 1 replica simplifies the initial deployment. Scale up once you've validated the deployment.
+State lives in Postgres, not in the pod, so the app scales horizontally cleanly. Starting with 1 replica simply keeps the initial deployment simple — scale up once you've validated it (`kubectl scale deployment chainlit-rag -n rag --replicas=2`).
 
 ### WebSocket Considerations
 
 Chainlit uses WebSockets. The ALB is configured with:
 - **600-second idle timeout** — exceeds Chainlit's session keep-alive to prevent mid-chat drops
-- **24-hour sticky sessions** — ensures each browser always routes to the same pod (required for WebSocket state)
+- **24-hour sticky sessions** — keeps each browser on the same pod for the duration of its WebSocket session
 
 ---
 
@@ -222,10 +223,14 @@ aws eks update-kubeconfig --name myeks --region us-east-2
 kubectl apply -f k8s/namespace.yaml
 ```
 
-- Create the ServiceAccount that EKS Pod Identity will bind the S3 role to
+- Create the `chainlit-rag` ServiceAccount the deployment runs as
 ```
 kubectl apply -f k8s/serviceaccount.yaml
 ```
+
+> The app reads its knowledge base from managed Postgres, not AWS, so the
+> pod needs **no AWS data-plane access** — there is no Pod Identity / S3 IAM
+> role to configure. The ServiceAccount is kept simply as the pod's identity.
 
 - Generate a Chainlit session signing secret and copy the output for the next command
 ```
@@ -233,20 +238,14 @@ uv run chainlit create-secret
 # → something like: CHAINLIT_AUTH_SECRET="abc123..."
 ```
 
-- Create the Kubernetes secret containing all app credentials and config values
-```bash
-echo "ANTHROPIC_API_KEY" && read -s ANTHROPIC_API_KEY
-echo "OPENAI_API_KEY" && read -s OPENAI_API_KEY
-echo "APP_PASSWORD" && read -s APP_PASSWORD \
-echo "CHAINLIT_AUTH_SECRET" && read -s CHAINLIT_AUTH_SECRET \
-echo "S3_BUCKET" && read -s S3_BUCKET \
-echo "S3_KEY" && read -s S3_KEY
-```
+- Get the **read-only** Supabase connection string. This is the same database
+  the Azure deployment uses — reuse the read-only DSN stored in Azure Key Vault
+  as `database-url-readonly` (see [supabase-readonly-role.md](supabase-readonly-role.md)).
+  Format: `postgresql://USER:PASSWORD@HOST:5432/postgres`
 
-Or equivalently with a loop:
-
+- Create the Kubernetes secret containing all app credentials
 ```bash
-for var in ANTHROPIC_API_KEY OPENAI_API_KEY APP_PASSWORD CHAINLIT_AUTH_SECRET S3_BUCKET S3_KEY; do
+for var in ANTHROPIC_API_KEY OPENAI_API_KEY APP_PASSWORD CHAINLIT_AUTH_SECRET ADMIN_SECRET PG_DATABASE_URL; do
   echo "$var" && read -rs $var
 done
 ```
@@ -258,81 +257,16 @@ kubectl create secret generic rag-secrets \
   --from-literal=OPENAI_API_KEY=$OPENAI_API_KEY \
   --from-literal=APP_PASSWORD=$APP_PASSWORD \
   --from-literal=CHAINLIT_AUTH_SECRET=$CHAINLIT_AUTH_SECRET \
-  --from-literal=S3_BUCKET=$S3_BUCKET \
-  --from-literal=S3_KEY=$S3_KEY
+  --from-literal=ADMIN_SECRET=$ADMIN_SECRET \
+  --from-literal=PG_DATABASE_URL=$PG_DATABASE_URL
 ```
 
-> `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` are not stored as secrets — S3 access uses EKS Pod Identity instead. See Step 7.
-
-### Step 7 — Configure EKS Pod Identity for S3 Access
-
-The `eks-pod-identity-agent` addon injects temporary AWS credentials into pods via a ServiceAccount-to-IAM-role binding, eliminating the need for static `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` credentials.
-
-#### Create the S3 IAM role
-
-- Write a trust policy allowing EKS Pod Identity to assume the role
-```
-cat > /tmp/pod-identity-trust.json <<EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [{
-    "Effect": "Allow",
-    "Principal": { "Service": "pods.eks.amazonaws.com" },
-    "Action": ["sts:AssumeRole", "sts:TagSession"]
-  }]
-}
-EOF
-```
-
-- Create the role
-```
-aws iam create-role \
-  --role-name chainlit-rag-s3 \
-  --assume-role-policy-document file:///tmp/pod-identity-trust.json
-```
-
-- Write an inline policy granting read access to your S3 bucket
-```
-S3_BUCKET=<your-bucket-name>
-cat > /tmp/s3-read-policy.json <<EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [{
-    "Effect": "Allow",
-    "Action": ["s3:GetObject", "s3:ListBucket"],
-    "Resource": [
-      "arn:aws:s3:::${S3_BUCKET}",
-      "arn:aws:s3:::${S3_BUCKET}/*"
-    ]
-  }]
-}
-EOF
-```
-
-- Attach the policy to the role
-```
-aws iam put-role-policy \
-  --role-name chainlit-rag-s3 \
-  --policy-name s3-read \
-  --policy-document file:///tmp/s3-read-policy.json
-```
-
-#### Create the PodIdentityAssociation
-
-Link the `chainlit-rag` Kubernetes ServiceAccount (applied in Step 6) to the IAM role:
-
-```bash
-ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-
-aws eks create-pod-identity-association \
-  --cluster-name myeks \
-  --region us-east-2 \
-  --namespace rag \
-  --service-account chainlit-rag \
-  --role-arn arn:aws:iam::${ACCOUNT_ID}:role/chainlit-rag-s3
-```
-
-The EKS Pod Identity Agent automatically injects temporary credentials into any pod using the `chainlit-rag` ServiceAccount. No service account annotations are required.
+> `ADMIN_SECRET` guards the `/admin` dashboard — the app **fails fast at
+> startup if it is unset**. Generate one with `openssl rand -hex 32`.
+>
+> `DB_INIT_SCHEMA=false` is set in the ConfigMap (Step earlier): the live app
+> uses a read-only role and must not run schema DDL — the admin/ETL connection
+> owns the schema.
 
 ---
 
@@ -355,7 +289,7 @@ The workflow:
 
 ## Post-Deploy Verification
 
-- Watch pod status until `Ready` (startup can take 30-60s while embeddings are generated)
+- Watch pod status until `Ready` (startup is fast — just a Postgres connection, no data loading)
 ```bash
 kubectl get pods -n rag -w
 ```
@@ -411,16 +345,19 @@ kubectl describe pod -n rag -l app=chainlit-rag
 ```
 Common causes: insufficient node resources, image pull error (check ECR permissions), or no nodes available.
 
-### Pod stuck in `Init` / slow to become `Ready`
+### Pod `CrashLoopBackOff` / not becoming `Ready`
 
-Expected behavior — the app fetches data from S3 and generates embeddings on startup. The `startupProbe` allows up to **120 seconds** before marking the pod unhealthy. If it's taking longer:
+Startup only opens a Postgres connection, so failures here are almost always DB- or config-related:
 
 ```bash
 kubectl logs -n rag deploy/chainlit-rag
-# Look for: data loading, embedding progress, or error messages
+# Look for: connection refused / auth failures, or "ADMIN_SECRET must be set"
 ```
 
-If S3 access fails, the app falls back to the local `data/` directory baked into the image.
+Common causes:
+- **`PG_DATABASE_URL` wrong or unreachable** — verify the read-only Supabase DSN, and that Supabase network restrictions allow connections from the cluster's egress.
+- **`ADMIN_SECRET` unset** — the app fails fast at startup; confirm it's in `rag-secrets`.
+- **`DB_INIT_SCHEMA` not `false`** — a read-only role can't run schema DDL, so the app errors on startup if it tries. Confirm the ConfigMap sets `DB_INIT_SCHEMA: "false"`.
 
 ### Image pull errors
 
@@ -447,7 +384,7 @@ kubectl rollout restart deployment/chainlit-rag -n rag
 
 ### Scaling up replicas
 
-The in-memory vector store is rebuilt independently per pod. With ALB sticky sessions, each user session stays on one pod. Scale up once validated:
+All state lives in Postgres, so replicas are stateless and safe to scale. ALB sticky sessions keep each browser's WebSocket pinned to one pod:
 
 ```bash
 kubectl scale deployment chainlit-rag -n rag --replicas=2
@@ -465,17 +402,15 @@ kubectl scale deployment chainlit-rag -n rag --replicas=2
 | `OPENAI_API_KEY` | OpenAI API key for embeddings |
 | `APP_PASSWORD` | Chainlit login password |
 | `CHAINLIT_AUTH_SECRET` | Chainlit session signing secret (`chainlit create-secret`) |
-| `S3_BUCKET` | S3 bucket containing the knowledge base |
-| `S3_KEY` | S3 object key for the knowledge base file |
-
-> S3 credentials are not stored here — the pod acquires temporary AWS credentials automatically via EKS Pod Identity (see Step 7).
+| `ADMIN_SECRET` | HTTP Basic password for `/admin`; app fails fast if unset (`openssl rand -hex 32`) |
+| `PG_DATABASE_URL` | Read-only Supabase DSN (same DB as the Azure deployment) |
 
 ### Stored as Kubernetes ConfigMap (`rag-config`)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `APP_USERNAME` | `admin` | Chainlit login username |
-| `AWS_REGION` | `us-east-2` | AWS region for S3 |
+| `DB_INIT_SCHEMA` | `false` | Read-only role — skip schema DDL (owned by admin/ETL connection) |
 | `LLM_MODEL` | `anthropic:claude-haiku-4-5-20251001` | Pydantic AI model string |
 | `TOP_K` | `5` | Number of chunks returned by RAG retrieval |
 | `SYSTEM_PROMPT` | _(see configmap)_ | System prompt injected into the Pydantic AI agent |
