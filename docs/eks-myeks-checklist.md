@@ -82,22 +82,36 @@ echo "Account: $ACCOUNT_ID  Region: $REGION  Cluster: $CLUSTER"
   kubectl apply -f k8s/serviceaccount.yaml   # bare pod identity; no AWS access
   ```
 
-- [ ] **Step 6 — App secret** (`rag-secrets`) — Supabase DSN + admin secret
+- [ ] **ESO prereqs present** — secrets are delivered via External Secrets Operator
+  ```bash
+  kubectl get clustersecretstore aws-ssm-parameter-store   # STATUS Valid/Ready
+  kubectl get crd externalsecrets.external-secrets.io      # ESO installed
+  ```
+  Also confirm the ESO controller's IAM identity can read `/rag/*`:
+  `ssm:GetParameter`, `ssm:GetParametersByPath`, and `kms:Decrypt` on the
+  SecureString KMS key.
+
+- [ ] **Step 6 — Write secrets to SSM Parameter Store** (`/rag/*`, SecureString)
   ```bash
   # CHAINLIT_AUTH_SECRET: uv run chainlit create-secret
   # ADMIN_SECRET:         openssl rand -hex 32
   # PG_DATABASE_URL:      read-only Supabase DSN (same as Azure 'database-url-readonly')
   for var in ANTHROPIC_API_KEY OPENAI_API_KEY APP_PASSWORD CHAINLIT_AUTH_SECRET ADMIN_SECRET PG_DATABASE_URL; do
-    echo "$var" && read -rs $var
+    echo "$var" && read -rs val
+    aws ssm put-parameter --name "/rag/$var" --value "$val" \
+      --type SecureString --overwrite --region $REGION
   done
-  kubectl create secret generic rag-secrets --namespace rag \
-    --from-literal=ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
-    --from-literal=OPENAI_API_KEY=$OPENAI_API_KEY \
-    --from-literal=APP_PASSWORD=$APP_PASSWORD \
-    --from-literal=CHAINLIT_AUTH_SECRET=$CHAINLIT_AUTH_SECRET \
-    --from-literal=ADMIN_SECRET=$ADMIN_SECRET \
-    --from-literal=PG_DATABASE_URL=$PG_DATABASE_URL
   ```
+  > Do **not** `kubectl create secret rag-secrets` — ESO owns it (`creationPolicy: Owner`)
+  > and would overwrite a manual secret.
+
+- [ ] **Step 6 — Apply the ExternalSecret and confirm it syncs**
+  ```bash
+  kubectl apply -f k8s/external-secret.yaml
+  kubectl get externalsecret rag-secrets -n rag   # STATUS → SecretSynced
+  kubectl get secret rag-secrets -n rag           # now exists, ESO-managed
+  ```
+  (The deploy workflow also applies this, but syncing now verifies SSM + ESO before deploying.)
 
 - [ ] **Supabase allows the cluster's egress IP** — pods leave via the EKS NAT
       gateway, a different IP than Azure App Service. If Supabase restricts inbound
@@ -134,6 +148,7 @@ echo "Account: $ACCOUNT_ID  Region: $REGION  Cluster: $CLUSTER"
 
 ## Most likely snags
 
-1. **`PG_DATABASE_URL` unreachable** — wrong DSN, or Supabase IP allow-list missing the cluster NAT IP.
-2. **`ADMIN_SECRET` unset** — app fails fast at startup (`config.py` enforces it).
-3. **AWS Load Balancer Controller missing** — deploy looks "successful" but the app is unreachable (no ALB hostname).
+1. **ExternalSecret not `SecretSynced`** — `rag-secrets` never gets created, so pods hang in `ContainerCreating`. Usually a missing SSM param, the ESO role lacking `ssm:Get*`/`kms:Decrypt`, or a `ClusterSecretStore` that isn't `Valid`. Check `kubectl describe externalsecret rag-secrets -n rag`.
+2. **`PG_DATABASE_URL` unreachable** — wrong DSN, or Supabase IP allow-list missing the cluster NAT IP.
+3. **`ADMIN_SECRET` unset** — app fails fast at startup (`config.py` enforces it).
+4. **AWS Load Balancer Controller missing** — deploy looks "successful" but the app is unreachable (no ALB hostname).

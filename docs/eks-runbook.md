@@ -232,41 +232,55 @@ kubectl apply -f k8s/serviceaccount.yaml
 > pod needs **no AWS data-plane access** — there is no Pod Identity / S3 IAM
 > role to configure. The ServiceAccount is kept simply as the pod's identity.
 
-- Generate a Chainlit session signing secret and copy the output for the next command
-```
-uv run chainlit create-secret
-# → something like: CHAINLIT_AUTH_SECRET="abc123..."
+Secrets are delivered by the **External Secrets Operator (ESO)**: you write the
+values into **AWS SSM Parameter Store** under `/rag/*`, and the `ExternalSecret`
+in [k8s/external-secret.yaml](../k8s/external-secret.yaml) syncs them into the
+`rag-secrets` Kubernetes Secret. The deploy workflow applies that manifest, so
+you do **not** create `rag-secrets` by hand.
+
+**Prerequisites (provisioned with the cluster):**
+- ESO is installed in `myeks`.
+- A `ClusterSecretStore` named `aws-ssm-parameter-store` exists.
+- The ESO controller's IAM identity (IRSA / Pod Identity) can read the params:
+  `ssm:GetParameter`, `ssm:GetParametersByPath` on `/rag/*`, plus `kms:Decrypt`
+  on the KMS key backing the `SecureString` values.
+
+- Gather the values: generate the Chainlit signing secret and an admin secret,
+  and get the **read-only** Supabase DSN (the same DB the Azure deployment uses —
+  reuse Azure Key Vault's `database-url-readonly`; see
+  [supabase-readonly-role.md](supabase-readonly-role.md)).
+```bash
+uv run chainlit create-secret   # → CHAINLIT_AUTH_SECRET
+openssl rand -hex 32            # → ADMIN_SECRET
+# PG_DATABASE_URL format: postgresql://USER:PASSWORD@HOST:5432/postgres
 ```
 
-- Get the **read-only** Supabase connection string. This is the same database
-  the Azure deployment uses — reuse the read-only DSN stored in Azure Key Vault
-  as `database-url-readonly` (see [supabase-readonly-role.md](supabase-readonly-role.md)).
-  Format: `postgresql://USER:PASSWORD@HOST:5432/postgres`
-
-- Create the Kubernetes secret containing all app credentials
+- Write each value into SSM Parameter Store as a `SecureString`
 ```bash
 for var in ANTHROPIC_API_KEY OPENAI_API_KEY APP_PASSWORD CHAINLIT_AUTH_SECRET ADMIN_SECRET PG_DATABASE_URL; do
-  echo "$var" && read -rs $var
+  echo "$var" && read -rs val
+  aws ssm put-parameter --name "/rag/$var" --value "$val" --type SecureString --overwrite --region us-east-2
 done
 ```
 
-```
-kubectl create secret generic rag-secrets \
-  --namespace rag \
-  --from-literal=ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
-  --from-literal=OPENAI_API_KEY=$OPENAI_API_KEY \
-  --from-literal=APP_PASSWORD=$APP_PASSWORD \
-  --from-literal=CHAINLIT_AUTH_SECRET=$CHAINLIT_AUTH_SECRET \
-  --from-literal=ADMIN_SECRET=$ADMIN_SECRET \
-  --from-literal=PG_DATABASE_URL=$PG_DATABASE_URL
+- Apply the `ExternalSecret` and confirm ESO syncs it (the deploy does this too,
+  but applying now lets you verify before deploying)
+```bash
+kubectl apply -f k8s/external-secret.yaml
+kubectl get externalsecret rag-secrets -n rag   # STATUS should reach SecretSynced
+kubectl get secret rag-secrets -n rag           # ESO-managed; should now exist
 ```
 
 > `ADMIN_SECRET` guards the `/admin` dashboard — the app **fails fast at
-> startup if it is unset**. Generate one with `openssl rand -hex 32`.
+> startup if it is unset**.
 >
 > `DB_INIT_SCHEMA=false` is set in the ConfigMap (Step earlier): the live app
 > uses a read-only role and must not run schema DDL — the admin/ETL connection
 > owns the schema.
+>
+> The plain `kubectl create secret` flow (and [k8s/secret.yaml.example](../k8s/secret.yaml.example))
+> remains documented as a fallback, but ESO/SSM is the path used here — do not
+> create `rag-secrets` manually, or ESO (`creationPolicy: Owner`) will fight it.
 
 ---
 
@@ -372,13 +386,19 @@ Check the ALB idle timeout. If users are seeing disconnects, confirm the ingress
 
 ### Updating secrets
 
-Kubernetes secrets are not automatically reloaded by running pods. After updating:
+Secrets are sourced from SSM via ESO, so update the **parameter**, not the
+Kubernetes Secret directly (ESO owns `rag-secrets` and would overwrite a manual
+edit on its next sync):
 
 ```bash
-kubectl delete secret rag-secrets -n rag
-kubectl create secret generic rag-secrets --namespace rag \
-  --from-literal=ANTHROPIC_API_KEY=<new-value> \
-  # ... all other values
+# 1. Update the SSM parameter
+aws ssm put-parameter --name /rag/PG_DATABASE_URL --value <new-dsn> \
+  --type SecureString --overwrite --region us-east-2
+
+# 2. Force ESO to re-sync now (or wait for refreshInterval: 1h)
+kubectl annotate externalsecret rag-secrets -n rag force-sync="$(date +%s)" --overwrite
+
+# 3. Running pods don't reload a changed Secret — restart to pick it up
 kubectl rollout restart deployment/chainlit-rag -n rag
 ```
 
@@ -394,7 +414,7 @@ kubectl scale deployment chainlit-rag -n rag --replicas=2
 
 ## Environment Variables Reference
 
-### Stored as Kubernetes Secret (`rag-secrets`)
+### Stored in SSM Parameter Store (`/rag/*`), synced to the `rag-secrets` Secret by ESO
 
 | Variable | Description |
 |----------|-------------|
