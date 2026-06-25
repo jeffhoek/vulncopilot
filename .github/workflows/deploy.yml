@@ -1,8 +1,6 @@
 name: Deploy to EKS
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -12,7 +10,7 @@ permissions:
 env:
   AWS_REGION: us-east-2
   ECR_REPOSITORY: chainlit-pydanticai-rag
-  EKS_CLUSTER: eks-proto
+  EKS_CLUSTER: myeks
   K8S_NAMESPACE: rag
   DEPLOYMENT_NAME: chainlit-rag
 
