@@ -72,7 +72,7 @@ var systemPrompt = concat(
 )
 
 var actionButtons = join([
-  'Latest KEV additions'
+  'List the 10 most recently added CVEs in the KEV catalog, ordered by date_added descending'
   'Ransomware-linked vulns'
   'Critical vulns with active exploits'
   'Anthropic Claude'
