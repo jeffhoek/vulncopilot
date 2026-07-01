@@ -73,13 +73,13 @@ var systemPrompt = concat(
 
 var actionButtons = join([
   'List the 10 most recently added CVEs in the KEV catalog, ordered by date_added descending'
-  'Ransomware-linked vulns'
-  'Critical vulns with active exploits'
+  'List KEV entries with known ransomware use'
+  'List critical-severity CVEs in the KEV catalog'
   'Anthropic Claude'
   'CVE-2026-25253'
   'OpenClaw'
   'Reference URLs for CVE-2017-11882'
-  'Top AI CVEs in 2026'
+  'Top 10 AI-related CVEs in 2026 by CVSS score'
   'VPN and remote access vulns'
   'Network device vulns'
   'Microsoft product vulns'

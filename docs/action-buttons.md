@@ -13,14 +13,14 @@ Set `ACTION_BUTTONS` to a JSON array of label strings. Any number of buttons is 
 ### `.env` / environment variables
 
 ```env
-ACTION_BUTTONS=["List the 10 most recently added CVEs in the KEV catalog, ordered by date_added descending","Anthropic Claude","Top AI vulns in 2026","CVE-2026-25253 include URLs","OpenClaw include URLs","Which weakness types appear most in KEV?"]
+ACTION_BUTTONS=["List the 10 most recently added CVEs in the KEV catalog, ordered by date_added descending","Anthropic Claude","Top 10 AI-related CVEs in 2026 by CVSS score","CVE-2026-25253 include URLs","OpenClaw include URLs","Which weakness types appear most in KEV?"]
 ```
 
 ### Kubernetes ConfigMap (`k8s/configmap.yaml`)
 
 ```yaml
 data:
-  ACTION_BUTTONS: '["List the 10 most recently added CVEs in the KEV catalog, ordered by date_added descending","Anthropic Claude","Top AI vulns in 2026","CVE-2026-25253 include URLs","OpenClaw include URLs","Which weakness types appear most in KEV?"]'
+  ACTION_BUTTONS: '["List the 10 most recently added CVEs in the KEV catalog, ordered by date_added descending","Anthropic Claude","Top 10 AI-related CVEs in 2026 by CVSS score","CVE-2026-25253 include URLs","OpenClaw include URLs","Which weakness types appear most in KEV?"]'
 ```
 
 Note: quotes around the value are required in YAML because JSON brackets would otherwise be misinterpreted.
@@ -32,7 +32,7 @@ Good buttons exercise the full range of what the agent can do. Aim for a mix tha
 | Pattern | Example button | Why |
 |---|---|---|
 | SQL → KEV | `"List the 10 most recently added CVEs in the KEV catalog, ordered by date_added descending"` | Date-sorted query against `kev_vulnerabilities`. Be explicit about sort order in the label — a vaguer phrasing like `"Latest KEV additions"` can get routed to `retrieve` (semantic search), which returns the same static top-k every time instead of the newest rows. |
-| SQL → NVD | `"Top AI vulns in 2026"` | CVSS + date filter against `nvd_vulnerabilities` |
+| SQL → NVD | `"Top 10 AI-related CVEs in 2026 by CVSS score"` | CVSS + date filter against `nvd_vulnerabilities` |
 | SQL → CWE join | `"Which weakness types appear most in KEV?"` | Joins `kev_vulnerabilities` → `cwe_definitions` |
 | SQL → specific CVE with URLs | `"CVE-2026-25253 include URLs"` | Fetches `reference_urls` from `nvd_vulnerabilities` |
 | Semantic search | `"Anthropic Claude"` | Triggers the `retrieve` tool via embedding similarity |
