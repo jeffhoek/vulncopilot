@@ -17,20 +17,19 @@ data:
   # OPEN_REGISTRATION: "false" # "true" = any GitHub user allowed
   LLM_MODEL: "anthropic:claude-haiku-4-5-20251001"
   TOP_K: "5"
-  SYSTEM_PROMPT: >-
-    You are a helpful assistant. Use the retrieve tool to find relevant context
-    before answering questions. Answer the user's question helpfully and
-    concisely based on the retrieved context. If the answer is not in the
-    context, say you don't have that information.
+  # SYSTEM_PROMPT intentionally unset — falls back to config.py's built-in
+  # prompt, which has the schema and retrieve-vs-query tool routing guidance.
+  # Do not override here without reproducing that full prompt (see how
+  # infra/modules/app-service.bicep does it for the Azure deployment).
   ACTION_BUTTONS: >-
-    ["Latest KEV additions",
-    "Ransomware-linked vulns",
-    "Critical vulns with active exploits",
+    ["List the 10 most recently added CVEs in the KEV catalog, ordered by date_added descending",
+    "List KEV entries with known ransomware use",
+    "List critical-severity CVEs in the KEV catalog",
     "Anthropic Claude",
     "CVE-2026-25253",
     "OpenClaw",
     "Get the reference URLs for that",
-    "Top AI vulns in 2026",
+    "Top 10 AI-related CVEs in 2026 by CVSS score",
     "VPN and remote access vulns",
     "Network device vulns",
     "Microsoft product vulns",
