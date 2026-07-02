@@ -10,6 +10,7 @@ A RAG chatbot built with Pydantic AI and Chainlit that indexes CISA KEV and NIST
 - [CWE integration](docs/cwe-integration.md)
 - [Supabase migration](plans/migrate-to-supabase.md)
 - [Deployment: Azure](docs/deploy-azure-app-service.md), [GCP](docs/deploy-gcp-cloud-run.md), [EKS](docs/eks-runbook.md)
+- [K8s pod hardening pen test](docs/k8s-pod-hardening.md)
 - [Observability (Langfuse + Logfire)](docs/observability.md)
 - [Supabase RBAC](docs/supabase-readonly-role.md)
 - [MCP server](docs/mcp-server.md)
