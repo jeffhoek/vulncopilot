@@ -1,6 +1,6 @@
-# K8s Pod Hardening — Before/After Pen Test
+# Container Hardening — Before/After Pen Test
 
-A record of the pod-hardening pass on `chainlit-rag` in the `rag` namespace on `myeks`: what the unhardened pod let you do, what changed (`9c26e99`, `d2710e0`), and how each change was verified live rather than assumed. Kept here so the exercise doesn't have to be redone from scratch to answer "why do we have this `securityContext`?"
+A record of the container/pod-hardening pass on `chainlit-rag`: what the unhardened pod let you do, what changed (`9c26e99`, `d2710e0`), and how each change was verified live rather than assumed. Covers both the non-root Dockerfile change (shared by the EKS and Azure deployments) and the K8s-specific `securityContext` enforcement (EKS only). Kept here so the exercise doesn't have to be redone from scratch to answer "why do we have this `securityContext`?"
 
 ## Goal
 
