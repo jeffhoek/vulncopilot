@@ -12,6 +12,7 @@ wheels/
 .env
 .chainlit/translations/
 .claude
+.files/
 
 .env.yaml
 data/

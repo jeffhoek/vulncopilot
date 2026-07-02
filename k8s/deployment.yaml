@@ -14,10 +14,22 @@ spec:
         app: chainlit-rag
     spec:
       serviceAccountName: chainlit-rag
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: chainlit-rag
           # Updated by CI/CD: kubectl set image deployment/chainlit-rag chainlit-rag=<ecr-image>:<sha>
           image: <AWS_ACCOUNT_ID>.dkr.ecr.us-east-2.amazonaws.com/chainlit-pydanticai-rag:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 8080
           envFrom:
@@ -25,6 +37,13 @@ spec:
                 name: rag-config
             - secretRef:
                 name: rag-secrets
+          # Chainlit writes upload spool files here at runtime (features.spontaneous_file_upload);
+          # /tmp is a general safety net for libraries that assume a writable tmp dir.
+          volumeMounts:
+            - name: chainlit-files
+              mountPath: /app/.files
+            - name: tmp
+              mountPath: /tmp
           resources:
             requests:
               cpu: "200m"
@@ -53,3 +72,8 @@ spec:
               port: 8080
             initialDelaySeconds: 15
             periodSeconds: 20
+      volumes:
+        - name: chainlit-files
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
