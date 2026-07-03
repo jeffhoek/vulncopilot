@@ -84,3 +84,9 @@ Validated out-of-band before merging, same pattern as the EKS manual tests: buil
 
 - **EKS**: `kubectl rollout undo deployment/chainlit-rag -n rag` — works regardless of how the bad rollout got there (CI or manual).
 - **Azure**: `az webapp config container set --docker-custom-image-name <previous-tag>` followed by `az webapp restart`.
+
+## Known gap found later: `.chainlit/translations` under `readOnlyRootFilesystem`
+
+`.chainlit/translations/` is gitignored, so it's never in the build context — the Docker image never bakes it in. Chainlit's own `init_config()` re-creates it from its bundled defaults at every startup via `os.makedirs()`, which fails under `readOnlyRootFilesystem: true` and crashloops the pod (`OSError: [Errno 30] Read-only file system`).
+
+This didn't surface during the pen test above because that test's image was built locally, where `.chainlit/translations/` already existed on disk from an earlier `chainlit run` and got copied in despite being gitignored (`.dockerignore` doesn't exclude it — only `.gitignore` does). A clean CI checkout never has the directory. Fixed by mounting an `emptyDir` at `/app/.chainlit/translations`, same pattern as `/app/.files` and `/tmp`.
