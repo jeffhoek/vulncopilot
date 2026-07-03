@@ -1,0 +1,29 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: chainlit-rag-default-deny-ingress
+  namespace: rag
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress"]
+  ingress:
+    # The ALB uses target-type: ip (see k8s/ingress.yaml), so it connects
+    # straight to the pod IP rather than through kube-proxy/Service — it has
+    # no Kubernetes pod identity for a podSelector to match. Its ENIs live in
+    # the VPC's public subnets (kubernetes.io/role/elb), which are disjoint
+    # from the node/pod subnets, so an ipBlock scoped to those subnets allows
+    # the ALB (and its health checks) without opening the rule to every pod
+    # in the cluster the way a broader VPC-CIDR ipBlock would.
+    - from:
+        - ipBlock:
+            cidr: 10.0.4.0/24
+        - ipBlock:
+            cidr: 10.0.5.0/24
+        - ipBlock:
+            cidr: 10.0.6.0/24
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Same-namespace traffic (e.g. a future sidecar or in-namespace service).
+    - from:
+        - podSelector: {}
