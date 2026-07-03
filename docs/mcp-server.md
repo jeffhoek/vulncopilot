@@ -163,7 +163,7 @@ mcp_server = MCPServerHTTP(
 )
 
 agent = Agent(
-    "anthropic:claude-haiku-4-5-20251001",
+    "anthropic:claude-sonnet-5",
     mcp_servers=[mcp_server],
 )
 

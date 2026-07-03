@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     top_k: int = 5
     max_history_messages: int = 50
     embedding_model: str = "text-embedding-3-small"
-    llm_model: str = "anthropic:claude-haiku-4-5-20251001"
+    llm_model: str = "anthropic:claude-sonnet-5"
     system_prompt: str = (
         "You are a security analyst assistant with access to the CISA Known "
         "Exploited Vulnerabilities (KEV) database and NIST National "
@@ -140,8 +140,8 @@ class Settings(BaseSettings):
     # Token Cost Estimation (USD per million tokens) — used by the /admin dashboard
     # to estimate spend from recorded token totals. One source of truth: usage.py
     # reads these via arguments rather than its own constants.
-    llm_input_cost_per_million: float = 0.80
-    llm_output_cost_per_million: float = 4.00
+    llm_input_cost_per_million: float = 3.00
+    llm_output_cost_per_million: float = 15.00
 
     # MCP Server
     mcp_api_key: str | None = None

@@ -206,7 +206,7 @@ Optional settings in `.env`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LLM_MODEL` | `anthropic:claude-haiku-4-5-20251001` | LLM for generating responses |
+| `LLM_MODEL` | `anthropic:claude-sonnet-5` | LLM for generating responses |
 | `TOP_K` | `5` | Number of documents to retrieve via semantic search |
 | `SYSTEM_PROMPT` | *(KEV/NVD-aware prompt)* | System prompt for the agent |
 | `ACTION_BUTTONS` | `[]` | Quick-query buttons shown in the UI (JSON array of strings) — see [docs/action-buttons.md](docs/action-buttons.md) |
@@ -218,9 +218,9 @@ Any [Pydantic AI supported model](https://ai.pydantic.dev/models/) can be used:
 
 | Model | Description |
 |-------|-------------|
-| `anthropic:claude-haiku-4-5-20251001` | Fast, concise responses (recommended default) |
-| `anthropic:claude-sonnet-4-6` | More capable, slower |
-| `anthropic:claude-opus-4-7` | Most capable, highest latency and cost |
+| `anthropic:claude-haiku-4-5` | Fast, concise responses |
+| `anthropic:claude-sonnet-5` | Near-Opus quality on coding/reasoning at Sonnet cost (recommended default) |
+| `anthropic:claude-opus-4-8` | Most capable, highest latency and cost |
 
 ## Docker
 

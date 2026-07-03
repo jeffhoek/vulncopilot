@@ -89,7 +89,7 @@ AWS_REGION: "us-east-1"
 S3_BUCKET: "your-bucket-name"
 S3_KEY: "path/to/your/data.txt"
 TOP_K: "5"
-LLM_MODEL: "anthropic:claude-haiku-4-5-20251001"
+LLM_MODEL: "anthropic:claude-sonnet-5"
 SYSTEM_PROMPT: "You are a helpful assistant. Use the retrieve tool to..."
 ```
 

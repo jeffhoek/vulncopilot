@@ -15,7 +15,7 @@ data:
   # ALLOWED_EMAILS: '[]'      # explicit emails
   # ALLOWED_EMAIL_DOMAINS: '[]'
   # OPEN_REGISTRATION: "false" # "true" = any GitHub user allowed
-  LLM_MODEL: "anthropic:claude-haiku-4-5-20251001"
+  LLM_MODEL: "anthropic:claude-sonnet-5"
   TOP_K: "5"
   # SYSTEM_PROMPT intentionally unset — falls back to config.py's built-in
   # prompt, which has the schema and retrieve-vs-query tool routing guidance.

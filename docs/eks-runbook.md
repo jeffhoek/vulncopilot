@@ -613,6 +613,6 @@ kubectl scale deployment chainlit-rag -n rag --replicas=2
 | `CHAINLIT_URL` | `https://rag.manheok.com` | Public HTTPS origin; Chainlit builds the OAuth `redirect_uri` from it |
 | `ALLOWED_LOGINS` | `["jeffhoek"]` | GitHub usernames admitted by the OAuth callback (JSON array) |
 | `DB_INIT_SCHEMA` | `false` | Read-only role — skip schema DDL (owned by admin/ETL connection) |
-| `LLM_MODEL` | `anthropic:claude-haiku-4-5-20251001` | Pydantic AI model string |
+| `LLM_MODEL` | `anthropic:claude-sonnet-5` | Pydantic AI model string |
 | `TOP_K` | `5` | Number of chunks returned by RAG retrieval |
 | `SYSTEM_PROMPT` | _(see configmap)_ | System prompt injected into the Pydantic AI agent |
