@@ -39,11 +39,15 @@ spec:
                 name: rag-secrets
           # Chainlit writes upload spool files here at runtime (features.spontaneous_file_upload);
           # /tmp is a general safety net for libraries that assume a writable tmp dir.
+          # .chainlit/translations is gitignored (never baked into the image) and Chainlit's
+          # init_config() re-creates it from its own bundled defaults on every startup.
           volumeMounts:
             - name: chainlit-files
               mountPath: /app/.files
             - name: tmp
               mountPath: /tmp
+            - name: chainlit-translations
+              mountPath: /app/.chainlit/translations
           resources:
             requests:
               cpu: "200m"
@@ -76,4 +80,6 @@ spec:
         - name: chainlit-files
           emptyDir: {}
         - name: tmp
+          emptyDir: {}
+        - name: chainlit-translations
           emptyDir: {}
