@@ -91,6 +91,8 @@ The app reads `LOGFIRE_ENABLED` and `LOGFIRE_TOKEN` from environment variables a
 
 **Azure App Service**: `LOGFIRE_TOKEN` is sourced from Key Vault automatically. `LOGFIRE_ENABLED` is controlled by `logfireEnabled` in `infra/parameters.dev.bicepparam` — set it to `true` there to enable. See the [Azure deployment guide](deploy-azure-app-service.md) (Step 4.1) for secret provisioning.
 
+**EKS**: `LOGFIRE_ENABLED` is set in `k8s/configmap.yaml`. `LOGFIRE_TOKEN` is synced into the `rag-secrets` secret by the External Secrets Operator from SSM Parameter Store — put the token at `/rag/LOGFIRE_TOKEN` (see `k8s/external-secret.yaml` and the [EKS runbook](eks-runbook.md), Step 6).
+
 **Other environments**: set these environment variables directly:
 
 ```

@@ -35,6 +35,9 @@ data:
     "Microsoft product vulns",
     "Top vendors in KEV",
     "Top CWE categories by avg CVSS score"]
+  # Logfire tracing (docs/observability.md). Requires LOGFIRE_TOKEN in the
+  # rag-secrets secret (synced from SSM /rag/LOGFIRE_TOKEN via ESO).
+  LOGFIRE_ENABLED: "true"
   # The live app connects with a read-only Supabase role via PG_DATABASE_URL
   # (in the rag-secrets secret), so it must not run schema DDL — that's owned
   # by the admin/ETL connection. See docs/supabase-readonly-role.md.
