@@ -143,7 +143,7 @@ resource appService 'Microsoft.Web/sites@2023-12-01' = {
         }
         {
           name: 'LLM_MODEL'
-          value: 'anthropic:claude-haiku-4-5-20251001'
+          value: 'anthropic:claude-sonnet-5'
         }
         {
           name: 'TOP_K'
