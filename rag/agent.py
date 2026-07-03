@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import asyncpg
 from openai import AsyncOpenAI
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 from config import settings
 from rag.embeddings import generate_embedding
@@ -21,6 +22,7 @@ rag_agent = Agent(
     settings.llm_model,
     deps_type=Deps,
     system_prompt=settings.system_prompt,
+    model_settings=(AnthropicModelSettings(anthropic_effort=settings.llm_effort) if settings.llm_effort else None),
 )
 
 

@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     max_history_messages: int = 50
     embedding_model: str = "text-embedding-3-small"
     llm_model: str = "anthropic:claude-sonnet-5"
+    # Effort level for Anthropic models: low | medium | high | max.
+    # Sonnet 5 defaults to "high" and runs adaptive thinking when unset, which
+    # roughly 4x'd response latency vs Haiku; "low" suits this workload of short
+    # scoped lookups. Leave blank for models without effort support (Haiku 4.5
+    # rejects the parameter).
+    llm_effort: str | None = "low"
     system_prompt: str = (
         "You are a security analyst assistant with access to the CISA Known "
         "Exploited Vulnerabilities (KEV) database and NIST National "
