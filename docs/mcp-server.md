@@ -11,6 +11,37 @@ or connection pools are involved.
 
 ---
 
+## Why the MCP server?
+
+The Chainlit UI is a closed loop: the analyst talks to one bot that talks to
+the KEV/NVD database, and the conversation ends there. The MCP server instead
+exposes that database as two tools (`retrieve`, `query`) that an analyst's own
+Claude — Desktop, Code, or a custom Pydantic AI agent — can combine with
+everything else in their environment. The vuln data becomes a capability, not a
+destination.
+
+That unlocks use cases the UI cannot serve:
+
+- **Cross-source correlation** — join KEV/NVD against a local SBOM,
+  `requirements.txt`, asset inventory, or a ticketing/GitHub connector in a
+  single conversation. The UI can only see its own database; the analyst's
+  Claude sees both.
+- **Deliverable generation** — turn a `query` result into a Jira ticket, an
+  `.xlsx` risk register, or a CISO briefing deck, using the tools already in
+  the analyst's environment.
+- **Agentic multi-step workflows** — "for each KEV added this month affecting
+  our stack, pull the CVSS vector, check for a detection rule, and draft the
+  missing ones" runs as an orchestrated loop rather than one chat turn.
+- **Scheduled / headless automation** — the Pydantic AI integration below drives
+  the same tools programmatically, so a nightly job can diff new KEV additions
+  and post to Slack with no browser in the loop.
+
+The UI is still the better choice for casual, no-setup, self-serve questions.
+Reach for the MCP server when the vuln data needs to compose with other tools,
+produce artifacts, or run unattended.
+
+---
+
 ## Endpoint
 
 ```
