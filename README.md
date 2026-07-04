@@ -37,6 +37,17 @@ NVD is a record browser with filters. This chatbot is an analyst. A few things i
 
 For a broader comparison against commercial platforms, academic projects, and other open-source tools, see [plans/competitive-analysis.md](plans/competitive-analysis.md).
 
+## Beyond the UI — bring the data to your own agent
+
+The chatbot is one way in. The built-in **MCP server** (`/mcp`) exposes the same `retrieve` and `query` tools to any external agent — Claude Desktop, Claude Code, or a custom Pydantic AI agent — so the KEV/NVD data becomes a capability in the analyst's own environment rather than a place they visit:
+
+- **Cross-source correlation** — join KEV/NVD against a local SBOM, asset inventory, or a Jira/GitHub connector in one conversation
+- **Deliverable generation** — turn a query result into a ticket, an `.xlsx` risk register, or a CISO briefing deck
+- **Agentic workflows** — multi-step triage loops instead of one-shot chat turns
+- **Headless automation** — nightly jobs that diff new KEV additions and post to Slack, no browser involved
+
+See [docs/mcp-server.md](docs/mcp-server.md) for setup and worked examples.
+
 ## Features
 
 - CISA KEV + NVD datasets (~1,500 KEV entries, enriched with CVSS scores from NVD) + MITRE CWE weakness taxonomy — see [docs/cwe-integration.md](docs/cwe-integration.md)
