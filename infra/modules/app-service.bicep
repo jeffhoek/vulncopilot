@@ -74,19 +74,17 @@ var systemPrompt = concat(
 var actionButtons = join([
   'List the 10 most recently added CVEs in the KEV catalog, ordered by date_added descending'
   'List KEV entries with known ransomware use'
-  'List critical-severity CVEs in the KEV catalog'
-  'Anthropic Claude'
-  'CVE-2026-25253'
-  'OpenClaw'
-  'Reference URLs for CVE-2017-11882'
+  'CVE-2021-44228 (Log4Shell)'
+  'CVE-2017-0144 (EternalBlue)'
+  'CVE-2023-34362 (MOVEit Transfer)'
+  'Reference URLs for CVE-2025-53770 (SharePoint ToolShell)'
   'Top 10 AI-related CVEs in 2026 by CVSS score'
+  'LLM prompt injection vulns'
+  'Anthropic Claude vulns'
+  'OpenClaw'
   'VPN and remote access vulns'
-  'Network device vulns'
-  'Microsoft product vulns'
   'Top vendors in KEV'
-  'Top CWE categories by avg CVSS score'
-  'CWE-78'
-  'Log4j'
+  'Which weakness types appear most in KEV?'
 ], '","')
 
 resource appServicePlan 'Microsoft.Web/serverfarms@2023-12-01' = {

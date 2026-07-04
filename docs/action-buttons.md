@@ -13,14 +13,14 @@ Set `ACTION_BUTTONS` to a JSON array of label strings. Any number of buttons is 
 ### `.env` / environment variables
 
 ```env
-ACTION_BUTTONS=["List the 10 most recently added CVEs in the KEV catalog, ordered by date_added descending","Anthropic Claude","Top 10 AI-related CVEs in 2026 by CVSS score","CVE-2026-25253 include URLs","OpenClaw include URLs","Which weakness types appear most in KEV?"]
+ACTION_BUTTONS=["List the 10 most recently added CVEs in the KEV catalog, ordered by date_added descending","CVE-2021-44228 (Log4Shell)","Top 10 AI-related CVEs in 2026 by CVSS score","Anthropic Claude vulns","LLM prompt injection vulns","Which weakness types appear most in KEV?"]
 ```
 
 ### Kubernetes ConfigMap (`k8s/configmap.yaml`)
 
 ```yaml
 data:
-  ACTION_BUTTONS: '["List the 10 most recently added CVEs in the KEV catalog, ordered by date_added descending","Anthropic Claude","Top 10 AI-related CVEs in 2026 by CVSS score","CVE-2026-25253 include URLs","OpenClaw include URLs","Which weakness types appear most in KEV?"]'
+  ACTION_BUTTONS: '["List the 10 most recently added CVEs in the KEV catalog, ordered by date_added descending","CVE-2021-44228 (Log4Shell)","Top 10 AI-related CVEs in 2026 by CVSS score","Anthropic Claude vulns","LLM prompt injection vulns","Which weakness types appear most in KEV?"]'
 ```
 
 Note: quotes around the value are required in YAML because JSON brackets would otherwise be misinterpreted.
@@ -34,11 +34,14 @@ Good buttons exercise the full range of what the agent can do. Aim for a mix tha
 | SQL → KEV | `"List the 10 most recently added CVEs in the KEV catalog, ordered by date_added descending"` | Date-sorted query against `kev_vulnerabilities`. Be explicit about sort order in the label — a vaguer phrasing like `"Latest KEV additions"` can get routed to `retrieve` (semantic search), which returns the same static top-k every time instead of the newest rows. |
 | SQL → NVD | `"Top 10 AI-related CVEs in 2026 by CVSS score"` | CVSS + date filter against `nvd_vulnerabilities` |
 | SQL → CWE join | `"Which weakness types appear most in KEV?"` | Joins `kev_vulnerabilities` → `cwe_definitions` |
-| SQL → specific CVE with URLs | `"CVE-2026-25253 include URLs"` | Fetches `reference_urls` from `nvd_vulnerabilities` |
-| Semantic search | `"Anthropic Claude"` | Triggers the `retrieve` tool via embedding similarity |
-| Semantic + SQL | `"OpenClaw include URLs"` | Semantic match resolves the CVE, then SQL fetches details |
+| SQL → landmark CVE | `"CVE-2021-44228 (Log4Shell)"` | Direct CVE lookup. The parenthetical nickname keeps the label recognizable and gives the agent routing context — a bare product/vendor name with no vuln wording (e.g. `"Anthropic Claude"`) can be misread as a question about the assistant itself and refused. Prefer `"Anthropic Claude vulns"`. |
+| SQL → specific CVE with URLs | `"Reference URLs for CVE-2025-53770 (SharePoint ToolShell)"` | Fetches `reference_urls` from `nvd_vulnerabilities` |
+| Semantic search | `"LLM prompt injection vulns"` | Triggers the `retrieve` tool via embedding similarity |
+| Semantic + SQL | `"OpenClaw"` | Semantic match resolves the CVEs, then SQL fetches details |
 
-Buttons that include "include URLs" explicitly signal to the agent to select `reference_urls` from NVD, which it may otherwise omit.
+Buttons that mention URLs (e.g. "Reference URLs for …") explicitly signal to the agent to select `reference_urls` from NVD, which it may otherwise omit.
+
+Test semantic phrasings against real retrieval before shipping them: embedding search matches on literal wording, so a thematic label like `"Supply chain attack vulns"` returns keyword collisions (Oracle's "Supply Chain Products Suite") rather than SolarWinds-style incidents. Landmark CVEs (Log4Shell, EternalBlue, MOVEit, ToolShell) make reliable buttons because a CVE ID always resolves via SQL.
 
 ## Implementation Details
 
