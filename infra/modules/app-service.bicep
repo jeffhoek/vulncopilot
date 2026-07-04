@@ -72,7 +72,7 @@ var systemPrompt = concat(
 )
 
 var actionButtons = join([
-  'List the 10 most recently added CVEs in the KEV catalog, ordered by date_added descending'
+  'List the 10 newest KEV entries by date_added'
   'List KEV entries with known ransomware use'
   'CVE-2021-44228 (Log4Shell)'
   'CVE-2017-0144 (EternalBlue)'
