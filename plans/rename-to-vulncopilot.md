@@ -63,7 +63,28 @@ git checkout -b rename-to-vulncopilot
 
 # Full sweep for the old name
 grep -rn "chainlit-pydanticai-postgres" . --exclude-dir=.git --exclude-dir=.venv --exclude-dir=node_modules
+
+# Also sweep for identifier-style uses of the project shorthand
+grep -rn "chainlit-rag\|chainlit_rag\|chainlitrag" . --exclude-dir=.git --exclude-dir=.venv --exclude-dir=node_modules
+
+# Broad sweep for other "chainlit"-prefixed identifiers used as project name
+# (NOT the Chainlit framework itself — see caveat below)
+grep -rn "chainlit" . --exclude-dir=.git --exclude-dir=.venv --exclude-dir=node_modules
 ```
+
+**IMPORTANT — `chainlit` disambiguation**: Chainlit is also the framework this app is built on, so the string `chainlit` appears legitimately in many places. Only rename occurrences where it's used as a *project identifier or resource name*. Do NOT rename:
+- `chainlit` package imports, dependency entries in `pyproject.toml`/`uv.lock`
+- `chainlit run app.py` commands
+- `chainlit.md` filename (Chainlit's welcome-screen config)
+- `.chainlit/` config directory references
+- Doc prose describing the Chainlit framework
+
+DO rename (these use `chainlit-*` as our project shorthand):
+- `k8s/*.yaml` — `metadata.name`, `metadata.labels`, `selector.matchLabels`, service names, network policies (`chainlit-rag`, etc.)
+- `infra/*.bicep` / `infra/*.bicepparam` — resource names, tags, App Service names
+- `Dockerfile` — image labels, `LABEL org.opencontainers.image.title`
+- `azure-pipelines.yml` — variable values, artifact/image names
+- Deployment scripts referencing container/service names
 
 Likely hit locations:
 - `pyproject.toml` — `name = "..."`, any URL fields, `[project.urls]`
@@ -74,6 +95,8 @@ Likely hit locations:
 - `plans/*.md` — any URL references
 - `.github/workflows/*.yml` — workflow names, image tags if pushed to GHCR
 - `azure-pipelines.yml` — pipeline name, resource references, image/artifact names, any hardcoded repo URL, service connection names that embed the repo name
+- `k8s/*.yaml` — `metadata.name`, labels, selectors, network policies (currently use `chainlit-rag`); note: netpol YAMLs on another feature branch also use `chainlit-rag` and will conflict on rebase
+- `infra/*.bicep`, `infra/*.bicepparam` — Azure resource names, tags, App Service names
 - `chainlit.md` (Chainlit welcome screen) if it mentions the project name
 - `uv.lock` — the project name field (will regenerate on next `uv sync`)
 
