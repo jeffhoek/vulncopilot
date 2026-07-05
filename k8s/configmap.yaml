@@ -15,6 +15,10 @@ data:
   # ALLOWED_EMAILS: '[]'      # explicit emails
   # ALLOWED_EMAIL_DOMAINS: '[]'
   # OPEN_REGISTRATION: "false" # "true" = any GitHub user allowed
+  # Admin/trusted users get ADMIN_DAILY_QUERY_LIMIT instead of the default 20.
+  # Keyed by the stable GitHub numeric ID (app.py builds identifiers as
+  # "github:<id>"), NOT the username. github:1850699 = jeffhoek.
+  ADMIN_USER_IDENTIFIERS: '["github:1850699"]'
   LLM_MODEL: "anthropic:claude-sonnet-5"
   TOP_K: "5"
   # SYSTEM_PROMPT intentionally unset — falls back to config.py's built-in
