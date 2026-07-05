@@ -57,11 +57,19 @@ Reverse-engineered from the live pod rather than assumed, since the ConfigMap in
 
 Kubernetes `NetworkPolicy` (and the `vpc-cni`/`aws-eks-nodeagent` enforcement backing it — see the addon note in [network-hardening.md](network-hardening.md)) only matches on `ipBlock` CIDRs, ports, and pod/namespace selectors. It has no concept of a hostname. That's a real gap for the SaaS entries above:
 
-- **GitHub** publishes stable CIDR ranges at `https://api.github.com/meta` (`web`/`api` keys) — used here (`140.82.112.0/20`, `192.30.252.0/22`, `143.55.64.0/20`), so this entry is solid.
+- **GitHub** publishes stable CIDR ranges at `https://api.github.com/meta` (`web`/`api` keys, all four non-`/32` IPv4 ranges they share: `140.82.112.0/20`, `143.55.64.0/20`, `185.199.108.0/22`, `192.30.252.0/22`), so this entry is solid.
 - **Anthropic** and **Supabase** currently resolve to fixed-looking, provider-owned IPs — used directly, but neither publishes a documented CIDR list, so there's no contractual guarantee they won't change.
 - **OpenAI** and **Logfire** are both fronted by Cloudflare's anycast network — the resolved IPs used here are a snapshot, and are the most likely of anything in this file to rotate without notice, silently breaking outbound calls until the `ipBlock`s are re-resolved and reapplied.
 
-This is the practical version of "wouldn't there need to be exceptions for Supabase/model providers/Logfire" — yes, and every one of those exceptions is a hand-maintained IP list with a shelf life. The durable fix is a DNS-aware egress mechanism (e.g. Cilium `toFQDNs`, or an explicit egress proxy/gateway) that allows by hostname and re-resolves automatically; that's a bigger lift than this cluster's current `vpc-cni` network-policy mode supports, so it's called out here as a known limitation rather than solved.
+This is the practical version of "wouldn't there need to be exceptions for Supabase/model providers/Logfire" — yes, and every one of those exceptions is a hand-maintained IP list with a shelf life. [scripts/refresh_egress_ips.py](../scripts/refresh_egress_ips.py) re-resolves the DNS-based entries and re-pulls GitHub's meta ranges, rewrites [k8s/networkpolicy-egress.yaml](../k8s/networkpolicy-egress.yaml), and exits non-zero if anything changed:
+
+```bash
+uv run python scripts/refresh_egress_ips.py
+git diff k8s/networkpolicy-egress.yaml   # review before applying
+kubectl apply -f k8s/networkpolicy-egress.yaml
+```
+
+That narrows the staleness window but doesn't eliminate it — a snapshot from wherever the script runs isn't guaranteed to match every IP an anycast provider might hand back to the pod itself, so it's a mitigation, not a fix. The durable fix is a DNS-aware egress mechanism — Cilium `toFQDNs`, or an SNI/Host-header-aware egress proxy that allows by hostname instead of IP — either of which would make this script (and the `ipBlock` list itself) unnecessary. That's a bigger lift than this cluster's current `vpc-cni` network-policy mode supports, so it's called out here as a known limitation rather than solved.
 
 ## After: verification
 
