@@ -19,14 +19,14 @@ POD=$(kubectl get pod -n rag -l app=chainlit-rag -o jsonpath='{.items[0].metadat
 
 kubectl exec -n rag "$POD" -- python3 -c "
 import urllib.request
-r = urllib.request.urlopen('https://example.com')
+r = urllib.request.urlopen('https://example.com', timeout=5)
 print('HTTP', r.status)
 "
 # HTTP 200 — an address with zero relationship to this app, reachable anyway
 
 kubectl exec -n rag "$POD" -- python3 -c "
 import socket
-s = socket.create_connection(('1.1.1.1', 443))
+s = socket.create_connection(('1.1.1.1', 443), timeout=5)
 print('CONNECTED', s.getpeername())
 "
 # CONNECTED ('1.1.1.1', 443) — raw TCP to an arbitrary IP, no DNS/allow-list involved at all
@@ -65,11 +65,13 @@ This is the practical version of "wouldn't there need to be exceptions for Supab
 
 ## After: verification
 
+`urlopen()`'s and `create_connection()`'s default timeout is `None` (blocking) unless passed explicitly — without `timeout=5`, a dropped connection reads as a multi-minute hang (the kernel's TCP SYN retry loop, ~130s on Linux) rather than a fast, obvious failure. Every call below sets it explicitly for that reason.
+
 ```bash
 # Blocked: the same arbitrary host and IP from the "before" section
 kubectl exec -n rag "$POD" -- python3 -c "
 import urllib.request
-urllib.request.urlopen('https://example.com')
+urllib.request.urlopen('https://example.com', timeout=5)
 "
 # urllib.error.URLError: <urlopen error [Errno 101] Network is unreachable>
 
