@@ -36,6 +36,15 @@ param etlCronExpression string = '0 6 * * 1'
 @description('Recipient address(es) for the ETL results email (comma-separated). Inject from a pipeline variable; empty disables the email. Do not commit a real address.')
 param etlEmailTo string = ''
 
+@description('Canonical public URL. Set to the custom domain once live (e.g. \'https://vulncopilot.org\'); empty falls back to the azurewebsites.net host. See plans/custom-domain-cloudflare.md.')
+param publicUrl string = ''
+
+@description('Apex custom domain for managed certs, e.g. \'vulncopilot.org\'. Empty = no custom-domain certs.')
+param customDomain string = ''
+
+@description('Issue managed certificates for the custom domain. Keep false until DNS + hostname binding exist for the environment.')
+param deployCustomDomainCerts bool = false
+
 var appName = 'chainlit-rag'
 var tags = {
   environment: environment
@@ -97,6 +106,9 @@ module appService 'modules/app-service.bicep' = {
     openRegistration: openRegistration
     allowedLogins: allowedLogins
     adminUserIdentifiers: adminUserIdentifiers
+    publicUrl: publicUrl
+    customDomain: customDomain
+    deployCustomDomainCerts: deployCustomDomainCerts
     tags: tags
   }
 }
