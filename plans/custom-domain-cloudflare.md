@@ -74,16 +74,54 @@ az webapp config hostname add -g $RG --webapp-name $APP --hostname www.vulncopil
 
 ## Step 4 — Create + bind free Managed Certificates
 
-```bash
-az webapp config ssl create -g $RG --name $APP --hostname vulncopilot.org
-az webapp config ssl create -g $RG --name $APP --hostname www.vulncopilot.org
+> **Policy gotcha — untagged certs are denied.** The resource group enforces
+> `require-tag-environment` and `require-tag-application` ([policy.bicep](../infra/modules/policy.bicep)).
+> `az webapp config ssl create` provides no way to set tags, so it fails with
+> `RequestDisallowedByPolicy`. Create the `Microsoft.Web/certificates` resource
+> with `az resource create` (which accepts tags) instead. Required values:
+> `environment=dev`, `application=chainlit-rag`.
 
-# then SNI-bind each returned thumbprint
-az webapp config ssl bind -g $RG --name $APP --certificate-thumbprint <thumb-apex> --ssl-type SNI
-az webapp config ssl bind -g $RG --name $APP --certificate-thumbprint <thumb-www>  --ssl-type SNI
+```bash
+ASP=asp-chainlit-rag-dev
+LOC=$(az webapp show -g $RG -n $APP --query location -o tsv)
+ASP_ID=$(az appservice plan show -g $RG -n $ASP --query id -o tsv)
+
+for host in vulncopilot.org www.vulncopilot.org; do
+  case "$host" in www.*) name=cert-www-vulncopilot-org ;; *) name=cert-vulncopilot-org ;; esac
+  az resource create -g $RG --resource-type "Microsoft.Web/certificates" \
+    --name "$name" --is-full-object \
+    --properties "{
+      \"location\": \"$LOC\",
+      \"tags\": {\"environment\":\"dev\",\"application\":\"chainlit-rag\"},
+      \"properties\": {
+        \"serverFarmId\": \"$ASP_ID\",
+        \"canonicalName\": \"$host\",
+        \"domainValidationMethod\": \"cname-delegation\"
+      }
+    }"
+done
 ```
 
+Issuance typically takes a few minutes (occasionally up to ~15–20). Then SNI-bind
+each — `ssl bind` is an update, not a new resource, so the tag policy doesn't apply:
+
+```bash
+THUMB_APEX=$(az resource show -g $RG --resource-type "Microsoft.Web/certificates" \
+  --name cert-vulncopilot-org --query properties.thumbprint -o tsv)
+THUMB_WWW=$(az resource show -g $RG --resource-type "Microsoft.Web/certificates" \
+  --name cert-www-vulncopilot-org --query properties.thumbprint -o tsv)
+
+az webapp config ssl bind -g $RG --name $APP --certificate-thumbprint $THUMB_APEX --ssl-type SNI
+az webapp config ssl bind -g $RG --name $APP --certificate-thumbprint $THUMB_WWW  --ssl-type SNI
+```
+
+`cname-delegation` is the right validation method since the Cloudflare records are
+CNAMEs (flattened at the apex); keep them grey-cloud until binding succeeds.
 `httpsOnly: true` is already set ([app-service.bicep:116](../infra/modules/app-service.bicep)), so HTTP→HTTPS redirect is automatic.
+
+> These certs are also declared in bicep (gated behind `deployCustomDomainCerts`,
+> with `tags` applied) so future deploys/environments don't re-hit the policy — see
+> [IaC changes](#iac-changes-so-this-survives-redeploys).
 
 ## Step 5 — Update `CHAINLIT_URL` (the critical app fix)
 
@@ -121,11 +159,18 @@ Then in a browser:
 
 ## IaC changes (so this survives redeploys)
 
-To keep the deployment reproducible and prevent Step 5 from being reverted:
+These are **already implemented** in bicep so Step 5 isn't reverted and future
+environments don't re-hit the tag policy:
 
-1. **Parametrize the public URL.** Add a `customDomain` (or `publicUrl`) param to [infra/main.bicep](../infra/main.bicep) and [infra/modules/app-service.bicep](../infra/modules/app-service.bicep), defaulting to `https://${appServiceName}.azurewebsites.net` so other environments are unaffected. Set `CHAINLIT_URL` from it at [app-service.bicep:210](../infra/modules/app-service.bicep).
-2. **Wire the dev value** in the `.bicepparam` for dev → `https://vulncopilot.org`.
-3. *(Optional)* Move the hostname binding + managed cert into bicep (`Microsoft.Web/sites/hostNameBindings` + `Microsoft.Web/certificates`). Note the chicken-and-egg: the managed cert can only issue after DNS validation exists, so first-time setup is often done via CLI (Steps 3–4) and codified afterward.
+1. **Public URL parametrized.** `publicUrl` param on [main.bicep](../infra/main.bicep) → [app-service.bicep](../infra/modules/app-service.bicep), defaulting empty (falls back to the `azurewebsites.net` host). `CHAINLIT_URL` is set from it. Dev value `https://vulncopilot.org` in [parameters.dev.bicepparam](../infra/parameters.dev.bicepparam).
+2. **Managed certs declared** as `Microsoft.Web/certificates` with `tags` applied, gated behind `deployCustomDomainCerts` + `customDomain`. Same resource names as the CLI created (`cert-vulncopilot-org`, `cert-www-vulncopilot-org`), so a deploy reconciles them in place rather than duplicating.
+
+> **Deploy ordering.** Don't run the bicep deployment until the manual Steps 3–4
+> have completed and been verified — the cert resources require the hostname
+> binding + live DNS, and the SNI SSL binding stays a CLI step (the
+> hostname-binding/cert ordering doesn't express cleanly in a single ARM pass).
+> Once the domain is live, `az deployment group create ... -p parameters.dev.bicepparam`
+> is idempotent against the manually-created resources.
 
 ## Rollback
 
