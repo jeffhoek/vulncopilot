@@ -14,6 +14,13 @@ param logfireEnabled = true
 param openRegistration = false
 param allowedLogins = '["jeffhoek"]'
 
+// Custom domain (see plans/custom-domain-cloudflare.md). DNS (CNAME + asuid TXT,
+// grey-cloud) and the hostname binding are live for dev, so certs are enabled.
+// publicUrl fixes the OAuth redirect_uri onto the apex host.
+param publicUrl = 'https://vulncopilot.org'
+param customDomain = 'vulncopilot.org'
+param deployCustomDomainCerts = true
+
 // ETL refresh schedule (UTC cron). Start frequent while validating, then dial back:
 //   '0 6,18 * * *' — twice daily, 06:00 + 18:00 UTC (bootstrap / watching it work)
 //   '0 6 * * *'    — daily, 06:00 UTC

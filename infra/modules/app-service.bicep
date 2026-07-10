@@ -17,6 +17,20 @@ param allowedLogins string = '[]' // JSON array, e.g. '["jeffhoek"]'
 param adminUserIdentifiers string = '[]'
 param tags object = {}
 
+// Custom domain (see plans/custom-domain-cloudflare.md).
+// Canonical public URL. When a custom domain is live, set this to it so
+// Chainlit builds the OAuth redirect_uri on the right host (App Service
+// terminates TLS at the front end and forwards plain HTTP, so it can't infer
+// this). Empty falls back to the default azurewebsites.net host.
+param publicUrl string = ''
+// Apex custom domain, e.g. 'vulncopilot.org'. Empty = no custom-domain certs.
+param customDomain string = ''
+// Gate for managed-certificate issuance. Keep false on a green-field deploy:
+// issuance requires the DNS records (CNAME + asuid TXT) to already exist AND
+// the hostname to be bound to the app (`az webapp config hostname add`). Flip
+// to true only once DNS is live for the environment.
+param deployCustomDomainCerts bool = false
+
 var imageRef = '${acrLoginServer}/chainlit-pydanticai-rag:latest'
 
 var systemPrompt = concat(
@@ -207,8 +221,9 @@ resource appService 'Microsoft.Web/sites@2023-12-01' = {
           // Canonical public URL. App Service terminates TLS at the front end and
           // forwards plain HTTP to the container, so without this Chainlit builds
           // the OAuth redirect_uri as http://… and GitHub rejects the mismatch.
+          // Set publicUrl to a custom domain once live (plans/custom-domain-cloudflare.md).
           name: 'CHAINLIT_URL'
-          value: 'https://${appServiceName}.azurewebsites.net'
+          value: empty(publicUrl) ? 'https://${appServiceName}.azurewebsites.net' : publicUrl
         }
         {
           name: 'MCP_API_KEY'
@@ -224,6 +239,36 @@ resource appService 'Microsoft.Web/sites@2023-12-01' = {
         }
       ]
     }
+  }
+}
+
+// Free App Service Managed Certificates for the custom domain + www.
+// Declared here (rather than `az webapp config ssl create`) so the required
+// environment/application tags are applied — the resource group tag policy
+// denies untagged Microsoft.Web/certificates. Issuance requires the hostname to
+// already be bound to the app and DNS (CNAME + asuid TXT, grey-cloud) to
+// resolve, so this is gated behind deployCustomDomainCerts. Bind with SNI via
+// `az webapp config ssl bind` after issuance — the hostname-binding/cert
+// ordering doesn't express cleanly in a single ARM pass.
+resource apexCert 'Microsoft.Web/certificates@2023-12-01' = if (deployCustomDomainCerts && !empty(customDomain)) {
+  name: 'cert-${replace(customDomain, '.', '-')}'
+  location: location
+  tags: tags
+  properties: {
+    serverFarmId: appServicePlan.id
+    canonicalName: customDomain
+    domainValidationMethod: 'cname-delegation'
+  }
+}
+
+resource wwwCert 'Microsoft.Web/certificates@2023-12-01' = if (deployCustomDomainCerts && !empty(customDomain)) {
+  name: 'cert-www-${replace(customDomain, '.', '-')}'
+  location: location
+  tags: tags
+  properties: {
+    serverFarmId: appServicePlan.id
+    canonicalName: 'www.${customDomain}'
+    domainValidationMethod: 'cname-delegation'
   }
 }
 

@@ -1,0 +1,77 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: chainlit-rag-restrict-egress
+  namespace: rag
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+  egress:
+    # Cluster DNS — required for every other rule below to resolve anything.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Supabase Postgres pooler (PG_DATABASE_URL). AWS-owned IPs behind the
+    # pooler, resolved at write time — see docs/egress-hardening.md for the
+    # re-resolution caveat if Supabase ever rotates them.
+    - to:
+        - ipBlock:
+            cidr: 44.225.139.66/32
+        - ipBlock:
+            cidr: 44.252.246.120/32
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Anthropic API (LLM_MODEL=anthropic:*, logfire.instrument_pydantic_ai).
+    - to:
+        - ipBlock:
+            cidr: 160.79.104.10/32
+      ports:
+        - protocol: TCP
+          port: 443
+    # OpenAI API (embeddings; logfire.instrument_openai). Fronted by
+    # Cloudflare — anycast, most likely to rotate of anything in this file.
+    - to:
+        - ipBlock:
+            cidr: 162.159.140.245/32
+        - ipBlock:
+            cidr: 172.66.0.243/32
+      ports:
+        - protocol: TCP
+          port: 443
+    # GitHub OAuth token exchange + user lookup (app.py oauth_callback).
+    # Official published ranges (https://api.github.com/meta "web"/"api"),
+    # not a resolved IP — far more stable than the SaaS entries above.
+    - to:
+        - ipBlock:
+            cidr: 140.82.112.0/20
+        - ipBlock:
+            cidr: 143.55.64.0/20
+        - ipBlock:
+            cidr: 185.199.108.0/22
+        - ipBlock:
+            cidr: 192.30.252.0/22
+      ports:
+        - protocol: TCP
+          port: 443
+    # Logfire ingest (LOGFIRE_ENABLED=true in the live ConfigMap). Also
+    # Cloudflare-fronted — same rotation caveat as OpenAI.
+    - to:
+        - ipBlock:
+            cidr: 104.26.8.129/32
+        - ipBlock:
+            cidr: 104.26.9.129/32
+        - ipBlock:
+            cidr: 172.67.69.88/32
+      ports:
+        - protocol: TCP
+          port: 443
