@@ -24,6 +24,10 @@ dependencies = [
     "jinja2>=3.1.6",
 ]
 
+[project.urls]
+Homepage = "https://vulncopilot.org"
+Repository = "https://github.com/jeffhoek/vulncopilot"
+
 [dependency-groups]
 dev = [
     "pre-commit>=4.5.1",

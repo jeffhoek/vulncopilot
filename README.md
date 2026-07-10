@@ -1,4 +1,8 @@
-# CISA KEV + NVD RAG Chatbot
+# Vulncopilot
+
+> CISA KEV + NVD RAG chatbot for vulnerability research
+
+**🌐 [vulncopilot.org](https://vulncopilot.org)**
 
 [![Tests](https://github.com/jeffhoek/vulncopilot/actions/workflows/test.yml/badge.svg)](https://github.com/jeffhoek/vulncopilot/actions/workflows/test.yml) [![Claude Code](https://github.com/jeffhoek/vulncopilot/actions/workflows/claude.yml/badge.svg)](https://github.com/jeffhoek/vulncopilot/actions/workflows/claude.yml) [![Deploy to EKS](https://github.com/jeffhoek/vulncopilot/actions/workflows/deploy.yml/badge.svg)](https://github.com/jeffhoek/vulncopilot/actions/workflows/deploy.yml)
 
