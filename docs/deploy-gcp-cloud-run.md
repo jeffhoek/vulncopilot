@@ -98,7 +98,7 @@ SYSTEM_PROMPT: "You are a helpful assistant. Use the retrieve tool to..."
 ## 5. Deploy
 
 ```bash
-gcloud run deploy chainlit-pydanticai-rag \
+gcloud run deploy vulncopilot \
   --source . \
   --region us-central1 \
   --allow-unauthenticated \
@@ -138,7 +138,7 @@ Service URL: https://YOUR_SERVICE-YOUR_PROJECT_NUMBER.us-central1.run.app
 ## 6. Verify the Deployment
 
 ```bash
-gcloud run services describe chainlit-pydanticai-rag \
+gcloud run services describe vulncopilot \
   --region us-central1 \
   --format="value(status.url)"
 ```
@@ -146,7 +146,7 @@ gcloud run services describe chainlit-pydanticai-rag \
 Check logs if something isn't working:
 
 ```bash
-gcloud run services logs read chainlit-pydanticai-rag \
+gcloud run services logs read vulncopilot \
   --region us-central1 \
   --limit 50
 ```
@@ -162,7 +162,7 @@ To redeploy after changing only a secret value:
 echo -n "new-value" | gcloud secrets versions add SECRET_NAME --data-file=-
 
 # Force a new revision to pick up the latest secret version
-gcloud run services update chainlit-pydanticai-rag \
+gcloud run services update vulncopilot \
   --region us-central1
 ```
 
@@ -171,7 +171,7 @@ gcloud run services update chainlit-pydanticai-rag \
 To delete the Cloud Run service and avoid further charges:
 
 ```bash
-gcloud run services delete chainlit-pydanticai-rag --region us-central1
+gcloud run services delete vulncopilot --region us-central1
 ```
 
 To also remove the container images from Artifact Registry:

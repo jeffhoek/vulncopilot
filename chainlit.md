@@ -21,10 +21,10 @@ Data is refreshed by a scheduled ETL job — see the **[live ETL run history](/e
 
 ## Learn more
 
-- **[GitHub repository](https://github.com/jeffhoek/chainlit-pydanticai-postgres)** — source, architecture, and full docs
-- **[Why this vs. the NVD site?](https://github.com/jeffhoek/chainlit-pydanticai-postgres/blob/main/README.md#why-this-project)** — capability comparison
-- **[MCP server](https://github.com/jeffhoek/chainlit-pydanticai-postgres/blob/main/docs/mcp-server.md)** — connect external agents to `retrieve` and `query`
-- **[Data loading (ETL)](https://github.com/jeffhoek/chainlit-pydanticai-postgres/blob/main/docs/data-loading.md)** · **[NVD integration](https://github.com/jeffhoek/chainlit-pydanticai-postgres/blob/main/docs/nvd-integration.md)** · **[CWE integration](https://github.com/jeffhoek/chainlit-pydanticai-postgres/blob/main/docs/cwe-integration.md)**
+- **[GitHub repository](https://github.com/jeffhoek/vulncopilot)** — source, architecture, and full docs
+- **[Why this vs. the NVD site?](https://github.com/jeffhoek/vulncopilot/blob/main/README.md#why-this-project)** — capability comparison
+- **[MCP server](https://github.com/jeffhoek/vulncopilot/blob/main/docs/mcp-server.md)** — connect external agents to `retrieve` and `query`
+- **[Data loading (ETL)](https://github.com/jeffhoek/vulncopilot/blob/main/docs/data-loading.md)** · **[NVD integration](https://github.com/jeffhoek/vulncopilot/blob/main/docs/nvd-integration.md)** · **[CWE integration](https://github.com/jeffhoek/vulncopilot/blob/main/docs/cwe-integration.md)**
 
 ---
 

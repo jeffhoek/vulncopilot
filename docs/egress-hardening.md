@@ -1,6 +1,6 @@
 # Egress NetworkPolicy — Before/After Pen Test
 
-A record of adding a default-deny **egress** `NetworkPolicy` to `chainlit-rag` on EKS, complementing the ingress-side policy in [network-hardening.md](network-hardening.md). Same methodology: confirm the weakness, apply the change, confirm it's closed and the app still works. Kept here so the exercise doesn't have to be redone from scratch to answer "why do we have this egress `NetworkPolicy`, and why is it a list of raw IPs?"
+A record of adding a default-deny **egress** `NetworkPolicy` to `vulncopilot` on EKS, complementing the ingress-side policy in [network-hardening.md](network-hardening.md). Same methodology: confirm the weakness, apply the change, confirm it's closed and the app still works. Kept here so the exercise doesn't have to be redone from scratch to answer "why do we have this egress `NetworkPolicy`, and why is it a list of raw IPs?"
 
 ## Goal
 
@@ -12,10 +12,10 @@ With the pod free to reach any address on the internet, demonstrate that concret
 
 ## Before: what the pod's egress allowed
 
-No egress `NetworkPolicy` existed in the `rag` namespace — only the pre-existing ingress one from [network-hardening.md](network-hardening.md) (`policyTypes: ["Ingress"]`, no `Egress` entry). From inside the live `chainlit-rag` pod (no `curl`/`wget` in the hardened Debian-slim image, so `python3` stands in):
+No egress `NetworkPolicy` existed in the `rag` namespace — only the pre-existing ingress one from [network-hardening.md](network-hardening.md) (`policyTypes: ["Ingress"]`, no `Egress` entry). From inside the live `vulncopilot` pod (no `curl`/`wget` in the hardened Debian-slim image, so `python3` stands in):
 
 ```bash
-POD=$(kubectl get pod -n rag -l app=chainlit-rag -o jsonpath='{.items[0].metadata.name}')
+POD=$(kubectl get pod -n rag -l app=vulncopilot -o jsonpath='{.items[0].metadata.name}')
 
 kubectl exec -n rag "$POD" -- python3 -c "
 import urllib.request
@@ -107,8 +107,8 @@ Enforcement confirmed via the same `PolicyEndpoint` mechanism as the ingress pol
 
 ```bash
 kubectl get policyendpoints -n rag
-# chainlit-rag-default-deny-ingress-bxtf7   30h
-# chainlit-rag-restrict-egress-n7mlb        <1m
+# vulncopilot-default-deny-ingress-bxtf7   30h
+# vulncopilot-restrict-egress-n7mlb        <1m
 ```
 
 Functional check on the real path: `curl https://rag.manheok.com/healthz` → `200`, pod restart count unchanged (`0`) since applying, and no connection-error log lines in the minutes following the change.
@@ -116,4 +116,4 @@ Functional check on the real path: `curl https://rag.manheok.com/healthz` → `2
 ## Rollback
 
 - **Policy only**: `kubectl delete -f k8s/networkpolicy-egress.yaml` — immediately reopens all egress; the ingress policy is untouched since it's a separate object.
-- If a SaaS provider's IPs rotate and break the app: check `kubectl logs -n rag deploy/chainlit-rag` for connection errors, re-resolve the affected host, update the corresponding `ipBlock`(s) in [k8s/networkpolicy-egress.yaml](../k8s/networkpolicy-egress.yaml), and `kubectl apply`. There's no automation for this yet — see the ipBlock-vs-FQDN gotcha above.
+- If a SaaS provider's IPs rotate and break the app: check `kubectl logs -n rag deploy/vulncopilot` for connection errors, re-resolve the affected host, update the corresponding `ipBlock`(s) in [k8s/networkpolicy-egress.yaml](../k8s/networkpolicy-egress.yaml), and `kubectl apply`. There's no automation for this yet — see the ipBlock-vs-FQDN gotcha above.

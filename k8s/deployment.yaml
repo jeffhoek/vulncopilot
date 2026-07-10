@@ -1,19 +1,19 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: chainlit-rag
+  name: vulncopilot
   namespace: rag
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: chainlit-rag
+      app: vulncopilot
   template:
     metadata:
       labels:
-        app: chainlit-rag
+        app: vulncopilot
     spec:
-      serviceAccountName: chainlit-rag
+      serviceAccountName: vulncopilot
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -22,9 +22,9 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: chainlit-rag
-          # Updated by CI/CD: kubectl set image deployment/chainlit-rag chainlit-rag=<ecr-image>:<sha>
-          image: <AWS_ACCOUNT_ID>.dkr.ecr.us-east-2.amazonaws.com/chainlit-pydanticai-rag:latest
+        - name: vulncopilot
+          # Updated by CI/CD: kubectl set image deployment/vulncopilot vulncopilot=<ecr-image>:<sha>
+          image: <AWS_ACCOUNT_ID>.dkr.ecr.us-east-2.amazonaws.com/vulncopilot:latest
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

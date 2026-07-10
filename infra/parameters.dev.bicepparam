@@ -1,8 +1,8 @@
 using './main.bicep'
 
 param environment = 'dev'
-param acrName = 'acrchainlitragdev'
-param keyVaultName = 'kv-chainlit-rag-dev'
+param acrName = 'acrvulncopilotdev'
+param keyVaultName = 'kv-vulncopilot-dev'
 param appServicePlanSku = 'B2'
 
 param logfireEnabled = true

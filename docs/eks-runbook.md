@@ -1,4 +1,4 @@
-# EKS Deployment Runbook — chainlit-pydanticai-rag
+# EKS Deployment Runbook — vulncopilot
 
 This runbook covers deploying the Chainlit + Pydantic AI RAG chatbot to an AWS EKS cluster using GitHub Actions CI/CD.
 
@@ -21,7 +21,7 @@ GitHub (push to main)
     ↓
 AWS EKS (myeks, us-east-2)
   └─ Namespace: rag
-      ├─ Deployment: chainlit-rag (1 replica)
+      ├─ Deployment: vulncopilot (1 replica)
       ├─ Service: ClusterIP (port 80 → 8080)
       └─ Ingress: ALB (internet-facing, HTTPS, sticky sessions)
            ↓  (TLS via ACM cert; rag.manheok.com → ALB via Cloudflare DNS)
@@ -38,7 +38,7 @@ Authentication is **GitHub OAuth** only (`@cl.oauth_callback`; there is no passw
 
 ### Why 1 Replica?
 
-State lives in Postgres, not in the pod, so the app scales horizontally cleanly. Starting with 1 replica simply keeps the initial deployment simple — scale up once you've validated it (`kubectl scale deployment chainlit-rag -n rag --replicas=2`).
+State lives in Postgres, not in the pod, so the app scales horizontally cleanly. Starting with 1 replica simply keeps the initial deployment simple — scale up once you've validated it (`kubectl scale deployment vulncopilot -n rag --replicas=2`).
 
 ### WebSocket Considerations
 
@@ -63,7 +63,7 @@ Chainlit uses WebSockets. The ALB is configured with:
 ### AWS Requirements
 
 - EKS cluster `myeks` is **ACTIVE** in `us-east-2`
-- ECR repository `chainlit-pydanticai-rag` exists (created in setup below)
+- ECR repository `vulncopilot` exists (created in setup below)
 - AWS CLI configured with sufficient permissions for setup steps
 
 ### GitHub Repository Requirements
@@ -79,7 +79,7 @@ Chainlit uses WebSockets. The ALB is configured with:
 
 ```bash
 aws ecr create-repository \
-  --repository-name chainlit-pydanticai-rag \
+  --repository-name vulncopilot \
   --region us-east-2
 ```
 
@@ -107,7 +107,7 @@ The deploy role ARN follows a fixed format, so you can add the GitHub Actions se
 
 ```bash
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-echo "arn:aws:iam::${ACCOUNT_ID}:role/github-actions-chainlit-rag" | pbcopy
+echo "arn:aws:iam::${ACCOUNT_ID}:role/github-actions-vulncopilot" | pbcopy
 ```
 
 In your GitHub repository:
@@ -124,7 +124,7 @@ Replace `<your-github-org>` with your GitHub org or username.
 
 ```bash
 GITHUB_ORG=<your-github-org>
-REPO_NAME=chainlit-pydanticai-rag
+REPO_NAME=vulncopilot
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 ```
 
@@ -157,7 +157,7 @@ EOF
 - Create the IAM role using the trust policy
 ```
 aws iam create-role \
-  --role-name github-actions-chainlit-rag \
+  --role-name github-actions-vulncopilot \
   --assume-role-policy-document file:///tmp/trust-policy.json
 ```
 
@@ -168,7 +168,7 @@ With the role created, attach the policies that define what it's authorized to d
 - Attach the ECR PowerUser managed policy to allow the role to push and pull images
 ```
 aws iam attach-role-policy \
-  --role-name github-actions-chainlit-rag \
+  --role-name github-actions-vulncopilot \
   --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser
 ```
 
@@ -194,7 +194,7 @@ EOF
 - Attach the EKS inline policy to the role
 ```
 aws iam put-role-policy \
-  --role-name github-actions-chainlit-rag \
+  --role-name github-actions-vulncopilot \
   --policy-name eks-describe \
   --policy-document file:///tmp/eks-policy.json
 ```
@@ -207,7 +207,7 @@ Add the IAM role to the EKS cluster's `aws-auth` ConfigMap, mapping it to a Kube
 eksctl create iamidentitymapping \
   --cluster myeks \
   --region us-east-2 \
-  --arn arn:aws:iam::${ACCOUNT_ID}:role/github-actions-chainlit-rag \
+  --arn arn:aws:iam::${ACCOUNT_ID}:role/github-actions-vulncopilot \
   --username github-actions \
   --group system:masters
 ```
@@ -226,7 +226,7 @@ aws eks update-kubeconfig --name myeks --region us-east-2
 kubectl apply -f k8s/namespace.yaml
 ```
 
-- Create the `chainlit-rag` ServiceAccount the deployment runs as
+- Create the `vulncopilot` ServiceAccount the deployment runs as
 ```
 kubectl apply -f k8s/serviceaccount.yaml
 ```
@@ -356,7 +356,7 @@ kubectl get pods -n rag -w
 
 - Stream logs to confirm successful startup
 ```bash
-kubectl logs -n rag deploy/chainlit-rag --follow
+kubectl logs -n rag deploy/vulncopilot --follow
 ```
 
 - Get the ALB hostname from the `ADDRESS` column
@@ -387,17 +387,17 @@ open https://rag.manheok.com
 
 - Roll back to the previous deployment
 ```bash
-kubectl rollout undo deployment/chainlit-rag -n rag
+kubectl rollout undo deployment/vulncopilot -n rag
 ```
 
 - To roll back to a specific revision, first list available revisions
 ```bash
-kubectl rollout history deployment/chainlit-rag -n rag
+kubectl rollout history deployment/vulncopilot -n rag
 ```
 
 - Then roll back to the chosen revision
 ```bash
-kubectl rollout undo deployment/chainlit-rag -n rag --to-revision=<N>
+kubectl rollout undo deployment/vulncopilot -n rag --to-revision=<N>
 ```
 
 ---
@@ -418,8 +418,8 @@ This is your reusable config; do **not** delete any of it during a pause:
 | Resource | Why it's safe to keep |
 |----------|-----------------------|
 | SSM parameters `/rag/*` | Account-scoped. ESO re-syncs `rag-secrets` from these on redeploy. |
-| IAM role `github-actions-chainlit-rag` (+ policies) | Account-scoped. |
-| ECR repo `chainlit-pydanticai-rag` (+ images) | Built image tags persist. |
+| IAM role `github-actions-vulncopilot` (+ policies) | Account-scoped. |
+| ECR repo `vulncopilot` (+ images) | Built image tags persist. |
 | ACM certificate | Stays `ISSUED` as long as its **Cloudflare DNS validation CNAME** stays. Ingress references it by ARN, which doesn't change. |
 | GitHub OAuth App + `AWS_DEPLOY_ROLE_ARN` repo secret | External to AWS. |
 | GitHub OIDC provider | Shared account resource. |
@@ -504,7 +504,7 @@ helm uninstall external-secrets -n external-secrets --no-hooks                  
 ```bash
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 eksctl create iamidentitymapping --cluster myeks --region us-east-2 \
-  --arn arn:aws:iam::${ACCOUNT_ID}:role/github-actions-chainlit-rag \
+  --arn arn:aws:iam::${ACCOUNT_ID}:role/github-actions-vulncopilot \
   --username github-actions --group system:masters
 ```
 4. **Update kubeconfig and redeploy** — push to `main` (or run the deploy
@@ -527,7 +527,7 @@ curl https://rag.manheok.com/healthz            # expect {"status":"ok"}
 ### Pod stuck in `Pending`
 
 ```bash
-kubectl describe pod -n rag -l app=chainlit-rag
+kubectl describe pod -n rag -l app=vulncopilot
 ```
 Common causes: insufficient node resources, image pull error (check ECR permissions), or no nodes available.
 
@@ -536,7 +536,7 @@ Common causes: insufficient node resources, image pull error (check ECR permissi
 Startup only opens a Postgres connection, so failures here are almost always DB- or config-related:
 
 ```bash
-kubectl logs -n rag deploy/chainlit-rag
+kubectl logs -n rag deploy/vulncopilot
 # Look for: connection refused / auth failures, or "ADMIN_SECRET must be set"
 ```
 
@@ -555,7 +555,7 @@ Common causes:
 ### Image pull errors
 
 ```bash
-kubectl describe pod -n rag -l app=chainlit-rag | grep -A5 Events
+kubectl describe pod -n rag -l app=vulncopilot | grep -A5 Events
 ```
 Ensure the ECR repository exists and the deploy role has `AmazonEC2ContainerRegistryPowerUser`.
 
@@ -578,7 +578,7 @@ aws ssm put-parameter --name /rag/PG_DATABASE_URL --value <new-dsn> \
 kubectl annotate externalsecret rag-secrets -n rag force-sync="$(date +%s)" --overwrite
 
 # 3. Running pods don't reload a changed Secret — restart to pick it up
-kubectl rollout restart deployment/chainlit-rag -n rag
+kubectl rollout restart deployment/vulncopilot -n rag
 ```
 
 ### Scaling up replicas
@@ -586,7 +586,7 @@ kubectl rollout restart deployment/chainlit-rag -n rag
 All state lives in Postgres, so replicas are stateless and safe to scale. ALB sticky sessions keep each browser's WebSocket pinned to one pod:
 
 ```bash
-kubectl scale deployment chainlit-rag -n rag --replicas=2
+kubectl scale deployment vulncopilot -n rag --replicas=2
 ```
 
 ---

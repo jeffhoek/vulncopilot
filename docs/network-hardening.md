@@ -1,6 +1,6 @@
 # NetworkPolicy — Before/After Pen Test
 
-A record of adding a default-deny `NetworkPolicy` to `chainlit-rag` on EKS: what the absence of one let you do, what changed, and how each change was verified live. Same methodology as [container-hardening.md](container-hardening.md) — confirm the weakness, apply the change, confirm it's closed and the app still works. Kept here so the exercise doesn't have to be redone from scratch to answer "why do we have this `NetworkPolicy`, and why did it look broken the first time?"
+A record of adding a default-deny `NetworkPolicy` to `vulncopilot` on EKS: what the absence of one let you do, what changed, and how each change was verified live. Same methodology as [container-hardening.md](container-hardening.md) — confirm the weakness, apply the change, confirm it's closed and the app still works. Kept here so the exercise doesn't have to be redone from scratch to answer "why do we have this `NetworkPolicy`, and why did it look broken the first time?"
 
 ## Goal
 
@@ -8,7 +8,7 @@ With no `NetworkPolicy` in the `rag` namespace, demonstrate concretely what that
 
 ## Why this matters here
 
-`chainlit-rag` is a single-tenant deployment today, so this isn't isolating tenant A from tenant B. The exposure is more basic: **any pod, anywhere in the cluster, in any namespace, has a direct network path to the app that only the ALB is supposed to have** — bypassing TLS termination, the 600s idle timeout, sticky sessions, and any assumption that "traffic reaches this pod only via the load balancer." A compromised or careless workload dropped into any other namespace on `myeks` could talk to `chainlit-rag` directly. Default-deny closes that regardless of whether the cluster ever becomes multi-tenant.
+`vulncopilot` is a single-tenant deployment today, so this isn't isolating tenant A from tenant B. The exposure is more basic: **any pod, anywhere in the cluster, in any namespace, has a direct network path to the app that only the ALB is supposed to have** — bypassing TLS termination, the 600s idle timeout, sticky sessions, and any assumption that "traffic reaches this pod only via the load balancer." A compromised or careless workload dropped into any other namespace on `myeks` could talk to `vulncopilot` directly. Default-deny closes that regardless of whether the cluster ever becomes multi-tenant.
 
 ## Before: what the absence of a NetworkPolicy allowed
 
@@ -20,17 +20,17 @@ kubectl wait -n default pod/netpol-test --for=condition=Ready --timeout=60s
 
 # via the in-cluster Service DNS
 kubectl exec -n default netpol-test -- curl -sS -o /dev/null -w "HTTP %{http_code}\n" --max-time 5 \
-  http://chainlit-rag.rag.svc.cluster.local/healthz
+  http://vulncopilot.rag.svc.cluster.local/healthz
 # HTTP 200
 
 # via the raw pod IP, bypassing the Service too
-POD_IP=$(kubectl get pod -n rag -l app=chainlit-rag -o jsonpath='{.items[0].status.podIP}')
+POD_IP=$(kubectl get pod -n rag -l app=vulncopilot -o jsonpath='{.items[0].status.podIP}')
 kubectl exec -n default netpol-test -- curl -sS -o /dev/null -w "HTTP %{http_code}\n" --max-time 5 \
   http://$POD_IP:8080/healthz
 # HTTP 200
 
 kubectl exec -n default netpol-test -- curl -sS -o /dev/null -w "HTTP %{http_code}\n" --max-time 5 \
-  http://chainlit-rag.rag.svc.cluster.local/mcp
+  http://vulncopilot.rag.svc.cluster.local/mcp
 # HTTP 401 — only because MCP_API_KEY happens to be set; nothing at the network layer required it
 ```
 
@@ -87,12 +87,12 @@ In this `vpc-cni` version (`v1.22.2-eksbuild.1`) the `NetworkPolicy`→`PolicyEn
 
 ```bash
 kubectl get policyendpoints -n rag
-# chainlit-rag-default-deny-ingress-bxtf7   63s
+# vulncopilot-default-deny-ingress-bxtf7   63s
 
-kubectl get policyendpoints -n rag chainlit-rag-default-deny-ingress-bxtf7 -o yaml
+kubectl get policyendpoints -n rag vulncopilot-default-deny-ingress-bxtf7 -o yaml
 # ownerReferences → the NetworkPolicy
 # spec.ingress → the three ALB-subnet CIDRs on port 8080
-# spec.podSelectorEndpoints → the live chainlit-rag pod IP
+# spec.podSelectorEndpoints → the live vulncopilot pod IP
 ```
 
 ## After: verification
@@ -103,7 +103,7 @@ kubectl exec -n default netpol-test -- curl -sS -o /dev/null -w "HTTP %{http_cod
 # times out (HTTP 000) — no longer 200
 
 kubectl exec -n default netpol-test -- curl -sS -o /dev/null -w "HTTP %{http_code}\n" --max-time 5 \
-  http://chainlit-rag.rag.svc.cluster.local/mcp
+  http://vulncopilot.rag.svc.cluster.local/mcp
 # times out (HTTP 000) — no longer 401
 ```
 

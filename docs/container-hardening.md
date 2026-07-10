@@ -1,6 +1,6 @@
 # Container Hardening — Before/After Pen Test
 
-A record of the container/pod-hardening pass on `chainlit-rag`: what the unhardened pod let you do, what changed (`9c26e99`, `d2710e0`), and how each change was verified live rather than assumed. Covers both the non-root Dockerfile change (shared by the EKS and Azure deployments) and the K8s-specific `securityContext` enforcement (EKS only). Kept here so the exercise doesn't have to be redone from scratch to answer "why do we have this `securityContext`?"
+A record of the container/pod-hardening pass on `vulncopilot`: what the unhardened pod let you do, what changed (`9c26e99`, `d2710e0`), and how each change was verified live rather than assumed. Covers both the non-root Dockerfile change (shared by the EKS and Azure deployments) and the K8s-specific `securityContext` enforcement (EKS only). Kept here so the exercise doesn't have to be redone from scratch to answer "why do we have this `securityContext`?"
 
 ## Goal
 
@@ -11,7 +11,7 @@ Deploy the app in its default (unhardened) state, demonstrate concretely what th
 [k8s/deployment.yaml](../k8s/deployment.yaml) originally shipped with **no `securityContext` at all**. Against the live pod:
 
 ```bash
-POD=$(kubectl get pod -n rag -l app=chainlit-rag -o jsonpath='{.items[0].metadata.name}')
+POD=$(kubectl get pod -n rag -l app=vulncopilot -o jsonpath='{.items[0].metadata.name}')
 
 kubectl exec -n rag "$POD" -- id
 # uid=0(root) gid=0(root) groups=0(root)
@@ -82,7 +82,7 @@ Validated out-of-band before merging, same pattern as the EKS manual tests: buil
 
 ## Rollback
 
-- **EKS**: `kubectl rollout undo deployment/chainlit-rag -n rag` — works regardless of how the bad rollout got there (CI or manual).
+- **EKS**: `kubectl rollout undo deployment/vulncopilot -n rag` — works regardless of how the bad rollout got there (CI or manual).
 - **Azure**: `az webapp config container set --docker-custom-image-name <previous-tag>` followed by `az webapp restart`.
 
 ## Known gap found later: `.chainlit/translations` under `readOnlyRootFilesystem`

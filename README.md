@@ -1,6 +1,6 @@
 # CISA KEV + NVD RAG Chatbot
 
-[![Tests](https://github.com/jeffhoek/chainlit-pydanticai-postgres/actions/workflows/test.yml/badge.svg)](https://github.com/jeffhoek/chainlit-pydanticai-postgres/actions/workflows/test.yml) [![Claude Code](https://github.com/jeffhoek/chainlit-pydanticai-postgres/actions/workflows/claude.yml/badge.svg)](https://github.com/jeffhoek/chainlit-pydanticai-postgres/actions/workflows/claude.yml) [![Deploy to EKS](https://github.com/jeffhoek/chainlit-pydanticai-postgres/actions/workflows/deploy.yml/badge.svg)](https://github.com/jeffhoek/chainlit-pydanticai-postgres/actions/workflows/deploy.yml)
+[![Tests](https://github.com/jeffhoek/vulncopilot/actions/workflows/test.yml/badge.svg)](https://github.com/jeffhoek/vulncopilot/actions/workflows/test.yml) [![Claude Code](https://github.com/jeffhoek/vulncopilot/actions/workflows/claude.yml/badge.svg)](https://github.com/jeffhoek/vulncopilot/actions/workflows/claude.yml) [![Deploy to EKS](https://github.com/jeffhoek/vulncopilot/actions/workflows/deploy.yml/badge.svg)](https://github.com/jeffhoek/vulncopilot/actions/workflows/deploy.yml)
 
 A retrieval-augmented generation chatbot for vulnerability research, built with Pydantic AI and Chainlit. Indexes the CISA Known Exploited Vulnerabilities (KEV) catalog and NIST National Vulnerability Database (NVD) into PostgreSQL with pgvector, and answers questions using Claude with semantic search and direct SQL.
 
@@ -71,7 +71,7 @@ See [docs/mcp-server.md](docs/mcp-server.md) for setup and worked examples.
 1. Clone the repository and navigate to the project directory:
 
    ```bash
-   cd chainlit-pydanticai-postgres
+   cd vulncopilot
    ```
 
 2. Install dependencies:
@@ -238,8 +238,8 @@ Any [Pydantic AI supported model](https://ai.pydantic.dev/models/) can be used:
 Build and run locally with Docker (or Podman):
 
 ```bash
-docker build -t chainlit-pydanticai-rag .
-docker run -p 8080:8080 --env-file .env chainlit-pydanticai-rag:latest
+docker build -t vulncopilot .
+docker run -p 8080:8080 --env-file .env vulncopilot:latest
 ```
 
 Then open http://localhost:8080.

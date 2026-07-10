@@ -13,13 +13,13 @@ trigger:
 pr: none
 
 variables:
-  acrName: acrchainlitragdev
-  acrLoginServer: acrchainlitragdev.azurecr.io
-  imageRepository: chainlit-pydanticai-rag
-  resourceGroup: rg-chainlit-rag-dev
-  appServiceName: app-chainlit-rag-dev
-  azureServiceConnection: azure-chainlit-rag
-  githubServiceConnection: github-chainlit-rag
+  acrName: acrvulncopilotdev
+  acrLoginServer: acrvulncopilotdev.azurecr.io
+  imageRepository: vulncopilot
+  resourceGroup: rg-vulncopilot-dev
+  appServiceName: app-vulncopilot-dev
+  azureServiceConnection: azure-vulncopilot
+  githubServiceConnection: github-vulncopilot
   # NOTE: personal/env-specific values (ETL_EMAIL_TO, ADMIN_USER_IDENTIFIERS) are
   # intentionally NOT declared here. A variable defined at the YAML root OVERRIDES a
   # Pipelines → Edit → Variables (UI) variable of the same name, so a default here
@@ -82,7 +82,7 @@ stages:
         displayName: Bicep what-if and deploy
         pool:
           vmImage: ubuntu-latest
-        environment: chainlit-rag-dev
+        environment: vulncopilot-dev
         strategy:
           runOnce:
             deploy:
@@ -195,7 +195,7 @@ stages:
         displayName: Update container and verify
         pool:
           vmImage: ubuntu-latest
-        environment: chainlit-rag-dev
+        environment: vulncopilot-dev
         strategy:
           runOnce:
             deploy:

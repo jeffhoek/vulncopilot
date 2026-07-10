@@ -27,16 +27,16 @@ Azure Bicep   → provisions all infrastructure (Resource Manager)
 
 ## Resource Names
 
-Pattern: `{type}-chainlit-rag-{env}` (globally unique resources drop hyphens)
+Pattern: `{type}-vulncopilot-{env}` (globally unique resources drop hyphens)
 
 | Resource | Dev |
 |---|---|
-| Resource Group | `rg-chainlit-rag-dev` |
-| Managed Identity | `id-chainlit-rag-dev` |
-| Container Registry | `acrchainlitragdev` |
-| App Service Plan | `asp-chainlit-rag-dev` |
-| App Service | `app-chainlit-rag-dev` |
-| Key Vault | `kv-chainlit-rag-dev` |
+| Resource Group | `rg-vulncopilot-dev` |
+| Managed Identity | `id-vulncopilot-dev` |
+| Container Registry | `acrvulncopilotdev` |
+| App Service Plan | `asp-vulncopilot-dev` |
+| App Service | `app-vulncopilot-dev` |
+| Key Vault | `kv-vulncopilot-dev` |
 
 > Storage Account and Blob Container have been removed. RAG data lives in Timescale Cloud (pgvector).
 
@@ -45,7 +45,7 @@ Pattern: `{type}-chainlit-rag-{env}` (globally unique resources drop hyphens)
 ## Prerequisites
 
 - Azure CLI (`az`) authenticated to the target subscription
-- Azure DevOps project created (e.g., `chainlit-rag`)
+- Azure DevOps project created (e.g., `vulncopilot`)
 - Contributor access on the target resource group (or subscription for first deploy)
 - `az bicep upgrade` run at least once (Bicep CLI 0.18+ required for `.bicepparam`)
 - Timescale Cloud service provisioned with pgvector extension enabled
@@ -56,9 +56,9 @@ Pattern: `{type}-chainlit-rag-{env}` (globally unique resources drop hyphens)
 
 ```bash
 az group create \
-  --name rg-chainlit-rag-dev \
+  --name rg-vulncopilot-dev \
   --location eastus \
-  --tags environment=dev application=chainlit-rag
+  --tags environment=dev application=vulncopilot
 ```
 
 ### 1.1 Register resource providers (one-time, subscription-scoped)
@@ -107,20 +107,20 @@ In **Azure DevOps** → **Organization Settings** → **Microsoft Entra** → **
 
 In **Azure DevOps** → your project → **Project Settings** → **Pipelines** → **Service connections** → **New service connection**:
 
-**GitHub** (`github-chainlit-rag`):
+**GitHub** (`github-vulncopilot`):
 - Type: **GitHub**, auth: **Grant authorization**, OAuth: **AzurePipelines**
-- Click **Authorize**, name it `github-chainlit-rag`, check **Grant access permission to all pipelines** → **Save**
+- Click **Authorize**, name it `github-vulncopilot`, check **Grant access permission to all pipelines** → **Save**
 
-**Azure Resource Manager** (`azure-chainlit-rag`):
+**Azure Resource Manager** (`azure-vulncopilot`):
 - Type: **Azure Resource Manager**, identity: **App registration (automatic)**, credential: **Workload identity federation**
-- Scope: **Subscription**, resource group: `rg-chainlit-rag-dev`
-- Name it `azure-chainlit-rag`, check **Grant access permission to all pipelines** → **Save**
+- Scope: **Subscription**, resource group: `rg-vulncopilot-dev`
+- Name it `azure-vulncopilot`, check **Grant access permission to all pipelines** → **Save**
 
 > If the resource group dropdown shows "Loading..." indefinitely, complete step 2.0 first.
 
 ### 2.2 Create the Pipeline
 
-In **Azure DevOps** → **Pipelines** → **New pipeline** → **GitHub** → select `chainlit-pydanticai-rag` → **Existing Azure Pipelines YAML file** → branch `main`, path `/azure-pipelines.yml` → **Continue** → **Save** (do not run yet).
+In **Azure DevOps** → **Pipelines** → **New pipeline** → **GitHub** → select `vulncopilot` → **Existing Azure Pipelines YAML file** → branch `main`, path `/azure-pipelines.yml` → **Continue** → **Save** (do not run yet).
 
 ### 2.3 Add the pipeline service principal Object ID to the pipeline
 
@@ -168,7 +168,7 @@ these the same way (Pipelines → Edit → Variables → New variable):
 > Confirm what the **live job** actually has — this is ground truth, not the pipeline:
 >
 > ```bash
-> az containerapp job show -n job-chainlit-rag-etl-dev -g rg-chainlit-rag-dev \
+> az containerapp job show -n job-vulncopilot-etl-dev -g rg-vulncopilot-dev \
 >   --query "properties.template.containers[0].env[?name=='ETL_EMAIL_TO']" -o json
 > ```
 >
@@ -181,7 +181,7 @@ these the same way (Pipelines → Edit → Variables → New variable):
 
 ### 2.4 Create the Deployment Environment
 
-In **Azure DevOps** → **Pipelines** → **Environments** → **New environment** → name: `chainlit-rag-dev`, resource: **None** → **Create**.
+In **Azure DevOps** → **Pipelines** → **Environments** → **New environment** → name: `vulncopilot-dev`, resource: **None** → **Create**.
 
 ### 2.5 Grant the pipeline service principal Owner on the resource group
 
@@ -192,7 +192,7 @@ az role assignment create \
   --role "Owner" \
   --assignee-object-id <PIPELINE_SP_OBJECT_ID> \
   --assignee-principal-type ServicePrincipal \
-  --scope /subscriptions/<subscription-id>/resourceGroups/rg-chainlit-rag-dev
+  --scope /subscriptions/<subscription-id>/resourceGroups/rg-vulncopilot-dev
 ```
 
 ---
@@ -209,7 +209,7 @@ PIPELINE_SP_OBJECT_ID=<pipeline-sp-object-id>
 ### Dry run — shows what will change
 ```bash
 az deployment group what-if \
-  --resource-group rg-chainlit-rag-dev \
+  --resource-group rg-vulncopilot-dev \
   --template-file infra/main.bicep \
   --parameters infra/parameters.dev.bicepparam \
   --parameters pipelineServicePrincipalObjectId=$PIPELINE_SP_OBJECT_ID
@@ -218,7 +218,7 @@ az deployment group what-if \
 ### Apply
 ```bash
 az deployment group create \
-  --resource-group rg-chainlit-rag-dev \
+  --resource-group rg-vulncopilot-dev \
   --template-file infra/main.bicep \
   --parameters infra/parameters.dev.bicepparam \
   --parameters pipelineServicePrincipalObjectId=$PIPELINE_SP_OBJECT_ID \
@@ -254,8 +254,8 @@ az role assignment create \
   --assignee-object-id $USER_OID \
   --assignee-principal-type User \
   --scope $(az keyvault show \
-      --name kv-chainlit-rag-dev \
-      --resource-group rg-chainlit-rag-dev \
+      --name kv-vulncopilot-dev \
+      --resource-group rg-vulncopilot-dev \
       --query id -o tsv)
 ```
 
@@ -265,7 +265,7 @@ az role assignment create \
 > OAuth (see [docs/public-access-setup.md](public-access-setup.md)). Register an
 > OAuth App at github.com/settings/developers with the **Authorization callback
 > URL** set to your App Service URL plus Chainlit's fixed callback path:
-> `https://app-chainlit-rag-dev.azurewebsites.net/auth/oauth/github/callback`.
+> `https://app-vulncopilot-dev.azurewebsites.net/auth/oauth/github/callback`.
 > Use its Client ID / Client Secret for `OAUTH_GITHUB_CLIENT_ID` /
 > `OAUTH_GITHUB_CLIENT_SECRET` below. Authorization is locked to `ALLOWED_LOGINS`
 > (default `["jeffhoek"]`, set in `parameters.dev.bicepparam`); the App Service is
@@ -277,7 +277,7 @@ az role assignment create \
 > redirect_uri is not associated with this application."* The bicep sets
 > `CHAINLIT_URL=https://<appServiceName>.azurewebsites.net` to fix this. If you see
 > that error, confirm the setting is present:
-> `az webapp config appsettings list -g rg-chainlit-rag-dev -n app-chainlit-rag-dev --query "[?name=='CHAINLIT_URL']"`.
+> `az webapp config appsettings list -g rg-vulncopilot-dev -n app-vulncopilot-dev --query "[?name=='CHAINLIT_URL']"`.
 
 Use the bash `for` loop with `read` shell built-in to securely enter the env vars:
 ```bash
@@ -296,27 +296,27 @@ done
 Create the Azure Key Vault secrets:
 ```bash
 az keyvault secret set \
-  --vault-name kv-chainlit-rag-dev \
+  --vault-name kv-vulncopilot-dev \
   --name anthropic-api-key \
   --value "$ANTHROPIC_API_KEY"
 
 az keyvault secret set \
-  --vault-name kv-chainlit-rag-dev \
+  --vault-name kv-vulncopilot-dev \
   --name openai-api-key \
   --value "$OPENAI_API_KEY"
 
 az keyvault secret set \
-  --vault-name kv-chainlit-rag-dev \
+  --vault-name kv-vulncopilot-dev \
   --name oauth-github-client-id \
   --value "$OAUTH_GITHUB_CLIENT_ID"
 
 az keyvault secret set \
-  --vault-name kv-chainlit-rag-dev \
+  --vault-name kv-vulncopilot-dev \
   --name oauth-github-client-secret \
   --value "$OAUTH_GITHUB_CLIENT_SECRET"
 
 az keyvault secret set \
-  --vault-name kv-chainlit-rag-dev \
+  --vault-name kv-vulncopilot-dev \
   --name chainlit-auth-secret \
   --value "$CHAINLIT_AUTH_SECRET"
 
@@ -328,32 +328,32 @@ az keyvault secret set \
 # brute force. For a copy-paste manager, `openssl rand -base64 18` (~24 chars) works.
 read -rs ADMIN_SECRET   # paste/type your chosen passphrase, then Enter
 az keyvault secret set \
-  --vault-name kv-chainlit-rag-dev \
+  --vault-name kv-vulncopilot-dev \
   --name admin-secret \
   --value "$ADMIN_SECRET"
 
 az keyvault secret set \
-  --vault-name kv-chainlit-rag-dev \
+  --vault-name kv-vulncopilot-dev \
   --name database-url \
   --value "$PG_DATABASE_URL"
 
 az keyvault secret set \
-  --vault-name kv-chainlit-rag-dev \
+  --vault-name kv-vulncopilot-dev \
   --name database-url-readonly \
   --value "$PG_DATABASE_URL_READONLY"
 
 az keyvault secret set \
-  --vault-name kv-chainlit-rag-dev \
+  --vault-name kv-vulncopilot-dev \
   --name mcp-api-key \
   --value "$MCP_API_KEY"
 
 az keyvault secret set \
-  --vault-name kv-chainlit-rag-dev \
+  --vault-name kv-vulncopilot-dev \
   --name logfire-token \
   --value "$LOGFIRE_TOKEN"
 
 az keyvault secret set \
-  --vault-name kv-chainlit-rag-dev \
+  --vault-name kv-vulncopilot-dev \
   --name nvd-api-key \
   --value "$NVD_API_KEY"
 ```
@@ -380,8 +380,8 @@ Restart the App Service to re-resolve the Key Vault references:
 
 ```bash
 az webapp restart \
-  --name app-chainlit-rag-dev \
-  --resource-group rg-chainlit-rag-dev
+  --name app-vulncopilot-dev \
+  --resource-group rg-vulncopilot-dev
 ```
 
 ---
@@ -407,7 +407,7 @@ DeployApp   → az webapp config container set + restart + /healthz poll (240s)
 To trigger manually without a code change:
 
 ```bash
-az pipelines run --name chainlit-pydanticai-rag
+az pipelines run --name vulncopilot
 ```
 
 ---
@@ -416,27 +416,27 @@ az pipelines run --name chainlit-pydanticai-rag
 
 ```bash
 # 1. All resources provisioned
-az resource list --resource-group rg-chainlit-rag-dev -o table
+az resource list --resource-group rg-vulncopilot-dev -o table
 
 # 2. KV references resolved (look for "Resolved" in the value column, not "Failed")
 az webapp config appsettings list \
-  --name app-chainlit-rag-dev \
-  --resource-group rg-chainlit-rag-dev \
+  --name app-vulncopilot-dev \
+  --resource-group rg-vulncopilot-dev \
   --query "[?contains(value, '@Microsoft.KeyVault')]" -o table
 
 # 3. Image present in ACR
 az acr repository show-tags \
-  --name acrchainlitragdev \
-  --repository chainlit-pydanticai-rag \
+  --name acrvulncopilotdev \
+  --repository vulncopilot \
   -o table
 
 # 4. Health check responds 200
-curl -v https://app-chainlit-rag-dev.azurewebsites.net/healthz
+curl -v https://app-vulncopilot-dev.azurewebsites.net/healthz
 
 # 5. App logs confirm successful DB connection
 az webapp log tail \
-  --name app-chainlit-rag-dev \
-  --resource-group rg-chainlit-rag-dev
+  --name app-vulncopilot-dev \
+  --resource-group rg-vulncopilot-dev
 # Expected: successful startup with no DB connection errors
 # Test query: "What vulnerabilities affect Apache?"
 
@@ -446,8 +446,8 @@ az webapp log tail \
 
 # 8. Logfire KV reference resolved and tracing active
 az webapp config appsettings list \
-  --name app-chainlit-rag-dev \
-  --resource-group rg-chainlit-rag-dev \
+  --name app-vulncopilot-dev \
+  --resource-group rg-vulncopilot-dev \
   --query "[?name=='LOGFIRE_TOKEN']" -o table
 # Expected: value shows "@Microsoft.KeyVault(...)" — if "Failed", check KV permissions
 # Then send a message in the app and confirm traces appear at https://logfire.pydantic.dev
@@ -463,13 +463,13 @@ az webapp config appsettings list \
 
 ```bash
 az keyvault secret set \
-  --vault-name kv-chainlit-rag-dev \
+  --vault-name kv-vulncopilot-dev \
   --name <secret-name> \
   --value "<new-value>"
 
 az webapp restart \
-  --name app-chainlit-rag-dev \
-  --resource-group rg-chainlit-rag-dev
+  --name app-vulncopilot-dev \
+  --resource-group rg-vulncopilot-dev
 ```
 
 **Reload KEV/NVD data** (e.g., after CISA publishes new entries):
@@ -488,7 +488,7 @@ For an automated weekly refresh instead of running these by hand, see
 ## Scheduled ETL Refresh (Container Apps Job)
 
 The KEV and NVD datasets need periodic refreshes. Rather than running the loaders
-by hand, a **Container Apps Job** (`job-chainlit-rag-etl-<env>`) runs them on a cron
+by hand, a **Container Apps Job** (`job-vulncopilot-etl-<env>`) runs them on a cron
 schedule, set by `etlCronExpression` in `infra/parameters.dev.bicepparam`. It reuses
 the web app's container image, managed identity, ACR, and Key Vault, and scales to
 zero between runs (you pay only for the few minutes each run takes).
@@ -585,19 +585,19 @@ lower HNSW index churn, at the cost of more (cheap) job executions.
 ```bash
 # Trigger an immediate run (e.g. to catch up after a missed window)
 az containerapp job start \
-  --name job-chainlit-rag-etl-dev \
-  --resource-group rg-chainlit-rag-dev
+  --name job-vulncopilot-etl-dev \
+  --resource-group rg-vulncopilot-dev
 
 # List recent executions and their status
 az containerapp job execution list \
-  --name job-chainlit-rag-etl-dev \
-  --resource-group rg-chainlit-rag-dev \
+  --name job-vulncopilot-etl-dev \
+  --resource-group rg-vulncopilot-dev \
   --query "[].{name:name, status:properties.status, start:properties.startTime}" -o table
 
 # Stream logs for a RUNNING execution (live replica only — see "Viewing logs" below)
 az containerapp job logs show \
-  --name job-chainlit-rag-etl-dev \
-  --resource-group rg-chainlit-rag-dev \
+  --name job-vulncopilot-etl-dev \
+  --resource-group rg-vulncopilot-dev \
   --container etl --execution <execution-name> --follow
 ```
 
@@ -610,7 +610,7 @@ az containerapp job logs show \
 
 ### Viewing logs
 
-The job writes two kinds of logs to the `log-chainlit-rag-dev` Log Analytics workspace:
+The job writes two kinds of logs to the `log-vulncopilot-dev` Log Analytics workspace:
 
 | Table | Contents |
 |---|---|
@@ -627,7 +627,7 @@ The job writes two kinds of logs to the `log-chainlit-rag-dev` Log Analytics wor
 
 ```bash
 WS=$(az monitor log-analytics workspace show \
-  -g rg-chainlit-rag-dev -n log-chainlit-rag-dev --query customerId -o tsv)
+  -g rg-vulncopilot-dev -n log-vulncopilot-dev --query customerId -o tsv)
 
 # Full console output from the last 2 days
 az monitor log-analytics query --workspace "$WS" -o table \
@@ -660,7 +660,7 @@ ContainerAppConsoleLogs_CL
 
 // Platform events (image pull, start/complete) for the job
 ContainerAppSystemLogs_CL
-| where JobName_s == "job-chainlit-rag-etl-dev"
+| where JobName_s == "job-vulncopilot-etl-dev"
 | order by TimeGenerated desc
 | project TimeGenerated, Log_s
 ```
@@ -723,7 +723,7 @@ See [docs/mcp-server.md](mcp-server.md) for the full MCP server operational guid
 - The B2 plan has `alwaysOn: true`, so cold starts only happen after a restart or deploy
 
 **App crash-loops on 503 right after deploy (`:( Application Error`)**
-- The app fails fast at startup if `ADMIN_SECRET` is empty (the `/admin` dashboard guard). Confirm the `admin-secret` Key Vault secret exists and the reference resolved: `az webapp config appsettings list -g rg-chainlit-rag-dev -n app-chainlit-rag-dev --query "[?name=='ADMIN_SECRET']"` (an empty `value` means the KV secret is missing — create it per Step 4.1, then restart).
+- The app fails fast at startup if `ADMIN_SECRET` is empty (the `/admin` dashboard guard). Confirm the `admin-secret` Key Vault secret exists and the reference resolved: `az webapp config appsettings list -g rg-vulncopilot-dev -n app-vulncopilot-dev --query "[?name=='ADMIN_SECRET']"` (an empty `value` means the KV secret is missing — create it per Step 4.1, then restart).
 - Also check the JSON-array app settings (`ADMIN_USER_IDENTIFIERS`, `ALLOWED_LOGINS`, …) hold valid JSON — a malformed value (e.g. quotes stripped to `[github:1]`) aborts startup. A *blank* value is tolerated as `[]`.
 
 **Database connection fails on startup**
@@ -746,7 +746,7 @@ See [docs/mcp-server.md](mcp-server.md) for the full MCP server operational guid
 
 **ETL job fails pulling the image or reading secrets**
 - The job uses the *same* managed identity as the App Service — confirm `AcrPull` and `Key Vault Secrets User` role assignments exist (they're created by the `rbac` module at resource-group scope)
-- Confirm `nvd-api-key`, `openai-api-key`, and `database-url` all exist in Key Vault (`az keyvault secret list --vault-name kv-chainlit-rag-dev -o table`)
+- Confirm `nvd-api-key`, `openai-api-key`, and `database-url` all exist in Key Vault (`az keyvault secret list --vault-name kv-vulncopilot-dev -o table`)
 
 **ETL job run terminated before completing**
 - A large backfill may exceed `replicaTimeout` (default 7200s/2h) — raise it in `etl-job.bicep`, or split the catch-up into smaller `--since` windows run manually

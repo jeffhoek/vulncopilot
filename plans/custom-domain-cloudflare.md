@@ -1,6 +1,6 @@
 # Custom domain: vulncopilot.org → Azure App Service
 
-Runbook for putting the Azure App Service dev deployment (`app-chainlit-rag-dev.azurewebsites.net`) behind the custom domain **vulncopilot.org**, registered at Cloudflare.
+Runbook for putting the Azure App Service dev deployment (`app-vulncopilot-dev.azurewebsites.net`) behind the custom domain **vulncopilot.org**, registered at Cloudflare.
 
 ## Context
 
@@ -11,9 +11,9 @@ The app is a Chainlit chatbot: it needs **WebSockets** and relies on **ARR stick
 
 | Setting | Current | Target |
 |---|---|---|
-| Public host | `app-chainlit-rag-dev.azurewebsites.net` | `vulncopilot.org` (apex), `www` redirect |
+| Public host | `app-vulncopilot-dev.azurewebsites.net` | `vulncopilot.org` (apex), `www` redirect |
 | TLS | Azure default cert | Azure Managed Certificate (free) |
-| `CHAINLIT_URL` | `https://app-chainlit-rag-dev.azurewebsites.net` | `https://vulncopilot.org` |
+| `CHAINLIT_URL` | `https://app-vulncopilot-dev.azurewebsites.net` | `https://vulncopilot.org` |
 | OAuth callback | `…azurewebsites.net/auth/oauth/github/callback` | `https://vulncopilot.org/auth/oauth/github/callback` |
 | DNS / registrar | — | Cloudflare |
 
@@ -34,7 +34,7 @@ Two viable paths for how Cloudflare sits in front of Azure:
 ## Prerequisites
 
 - Azure CLI (`az`) authenticated to the subscription
-- Contributor on `rg-chainlit-rag-dev`
+- Contributor on `rg-vulncopilot-dev`
 - Cloudflare account with `vulncopilot.org` active (nameservers delegated to Cloudflare)
 - Access to the GitHub OAuth App (github.com/settings/developers)
 
@@ -43,8 +43,8 @@ Two viable paths for how Cloudflare sits in front of Azure:
 ## Step 1 — Read verification ID and inbound IP from Azure
 
 ```bash
-RG=rg-chainlit-rag-dev
-APP=app-chainlit-rag-dev
+RG=rg-vulncopilot-dev
+APP=app-vulncopilot-dev
 
 az webapp show -g $RG -n $APP \
   --query "{verifyId:customDomainVerificationId, inboundIp:inboundIpAddress, defaultHost:defaultHostName}" -o table
@@ -58,9 +58,9 @@ Cloudflare CNAME flattening allows a CNAME at the apex, avoiding A-record manage
 
 | Type | Name | Value | Proxy |
 |---|---|---|---|
-| CNAME | `@` (`vulncopilot.org`) | `app-chainlit-rag-dev.azurewebsites.net` | **DNS only** (grey) |
+| CNAME | `@` (`vulncopilot.org`) | `app-vulncopilot-dev.azurewebsites.net` | **DNS only** (grey) |
 | TXT | `asuid` | *(verifyId from step 1)* | — |
-| CNAME | `www` | `app-chainlit-rag-dev.azurewebsites.net` | **DNS only** (grey) |
+| CNAME | `www` | `app-vulncopilot-dev.azurewebsites.net` | **DNS only** (grey) |
 | TXT | `asuid.www` | *(same verifyId)* | — |
 
 Grey-cloud (DNS-only) is **required** during setup — Azure's domain verification and managed-cert issuance both fail if Cloudflare's proxy is in front.
@@ -79,10 +79,10 @@ az webapp config hostname add -g $RG --webapp-name $APP --hostname www.vulncopil
 > `az webapp config ssl create` provides no way to set tags, so it fails with
 > `RequestDisallowedByPolicy`. Create the `Microsoft.Web/certificates` resource
 > with `az resource create` (which accepts tags) instead. Required values:
-> `environment=dev`, `application=chainlit-rag`.
+> `environment=dev`, `application=vulncopilot`.
 
 ```bash
-ASP=asp-chainlit-rag-dev
+ASP=asp-vulncopilot-dev
 LOC=$(az webapp show -g $RG -n $APP --query location -o tsv)
 ASP_ID=$(az appservice plan show -g $RG -n $ASP --query id -o tsv)
 
@@ -92,7 +92,7 @@ for host in vulncopilot.org www.vulncopilot.org; do
     --name "$name" --is-full-object \
     --properties "{
       \"location\": \"$LOC\",
-      \"tags\": {\"environment\":\"dev\",\"application\":\"chainlit-rag\"},
+      \"tags\": {\"environment\":\"dev\",\"application\":\"vulncopilot\"},
       \"properties\": {
         \"serverFarmId\": \"$ASP_ID\",
         \"canonicalName\": \"$host\",

@@ -1,11 +1,11 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: chainlit-rag
+  name: vulncopilot
   namespace: rag
 spec:
   selector:
-    app: chainlit-rag
+    app: vulncopilot
   ports:
     - port: 80
       targetPort: 8080
