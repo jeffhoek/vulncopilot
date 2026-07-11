@@ -150,6 +150,11 @@ Use `--force-with-lease` (not `--force`) to avoid clobbering any updates.
 
 ### 9. Azure App Service redeploy (blue/green)
 
+> **As-run record:** the exact commands, the two deployment failures + fixes, and the
+> custom-domain/cert mechanics from the dev cutover are logged in
+> [docs/rename-cutover-runlog.md](../docs/rename-cutover-runlog.md). This section is the
+> forward runbook; that file is what actually happened.
+
 **Scope**: Azure App Service **dev** only. EKS and GCP Cloud Run are untouched by this step — no namespace/SSM changes needed here (handle the EKS `/rag/*` rename separately if/when desired).
 
 Rather than rename live Azure resources (RGs, ACR, and the App Service hostname **cannot** be renamed in place), stand up a fresh `vulncopilot` stack from the renamed IaC, validate it, then delete the old `chainlit-rag` stack. Every globally-unique name differs (`*-chainlit-rag-*` → `*-vulncopilot-*`), so the two stacks coexist and the old one stays as a rollback until cutover.
