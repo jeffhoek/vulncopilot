@@ -168,66 +168,104 @@ Old → new resource names (from the renamed IaC):
 | ADO service connections | `azure-chainlit-rag`, `github-chainlit-rag` | `azure-vulncopilot`, `github-vulncopilot` |
 | ADO environment | `chainlit-rag-dev` | `vulncopilot-dev` |
 
-#### 9.1 Provision the new stack from renamed bicep
+> **Ordering matters.** The ETL Container Apps Job in `main.bicep` validates **both its image and its Key Vault secrets at create time**, so the registry and vault must be seeded **before** the stack deploy (9.2 before 9.3). The App Service tolerates a missing image/secret at deploy time; the Container Apps Job does not. (Learned the hard way — deploying first fails the ETL job on missing secret, then on missing image.)
 
-Deploy `infra/main.bicep` + `infra/parameters.dev.bicepparam` (creates `rg-vulncopilot-dev`, `acrvulncopilotdev`, `kv-vulncopilot-dev`, `id-vulncopilot-dev`, `asp-vulncopilot-dev`, `app-vulncopilot-dev`, `log-vulncopilot-dev`). The App Service will fail to pull its image until 9.2 — expected.
+#### 9.1 Prerequisites — resource group, service connection, SP elevation
 
-#### 9.2 Pre-seed the new registry with the known-good image
+1. Create the empty resource group first — the ARM service connection is RG-scoped, so the RG must exist:
+   ```bash
+   az group create -n rg-vulncopilot-dev -l eastus \
+     --tags environment=dev application=vulncopilot
+   ```
+2. In ADO, **reuse the existing project** (do not create a new one — the project name is internal-only and matches nothing in Azure; rename it to `vulncopilot` later if you want the cosmetics). Create the ARM service connection **`azure-vulncopilot`** (automatic SP, scope = resource group `rg-vulncopilot-dev`). This auto-grants the SP **Contributor**.
+3. **Elevate the SP to Owner** on the RG — the bicep `rbac`/`policy` modules create role and policy assignments (`Microsoft.Authorization/*/write`), which Contributor cannot do. The old pipeline SPs had Owner; match that:
+   ```bash
+   SP_OID=$(az role assignment list -g rg-vulncopilot-dev \
+     --query "[?principalType=='ServicePrincipal'].principalId | [0]" -o tsv)
+   az role assignment create --role Owner --assignee-object-id "$SP_OID" \
+     --assignee-principal-type ServicePrincipal \
+     --scope $(az group show -n rg-vulncopilot-dev --query id -o tsv)
+   ```
+   Keep `$SP_OID` — it's the `pipelineServicePrincipalObjectId` / `PIPELINE_SP_OBJECT_ID` used below.
 
-Copy the existing artifact so the first deploy pulls something already validated (no dependency on a fresh build):
+#### 9.2 Seed the registry AND Key Vault (before deploying)
 
+Image — copy the existing artifact so the stack has a known-good image to run:
 ```bash
-az acr import \
-  --name acrvulncopilotdev \
+az acr import --name acrvulncopilotdev \
   --source acrchainlitragdev.azurecr.io/chainlit-pydanticai-rag:latest \
   --image vulncopilot:latest
 ```
 
-Then restart the App Service so it pulls `acrvulncopilotdev.azurecr.io/vulncopilot:latest`. CI will rebuild under the new name on the next push.
-
-#### 9.3 Recreate Key Vault secrets
-
-Copy every secret from the old vault to the new one (values never printed):
-
+Secrets — both vaults are **RBAC-mode**, and being subscription Owner does **not** grant data-plane access. Grant yourself Secrets Officer on the new vault, then copy **every** secret (values never printed):
 ```bash
-OLD_KV=kv-chainlit-rag-dev
-NEW_KV=kv-vulncopilot-dev
-for s in database-url database-url-readonly anthropic-api-key openai-api-key \
-         oauth-github-client-id oauth-github-client-secret admin-secret \
-         nvd-api-key chainlit-auth-secret; do
+az role assignment create --role "Key Vault Secrets Officer" \
+  --assignee-object-id $(az ad signed-in-user show --query id -o tsv) \
+  --assignee-principal-type User \
+  --scope $(az keyvault show -n kv-vulncopilot-dev --query id -o tsv)
+
+OLD_KV=kv-chainlit-rag-dev; NEW_KV=kv-vulncopilot-dev
+for s in $(az keyvault secret list --vault-name "$OLD_KV" --query "[].name" -o tsv); do
   v=$(az keyvault secret show --vault-name "$OLD_KV" --name "$s" --query value -o tsv)
   az keyvault secret set --vault-name "$NEW_KV" --name "$s" --value "$v" >/dev/null
   echo "copied: $s"
 done
 ```
+Copy the **whole** vault, not a hand-picked subset — it includes `logfire-token`, `mcp-api-key`, `app-password`, etc. beyond the obvious app/DB keys. `database-url*` point at Supabase and are reused verbatim.
 
-`database-url*` point at Supabase and are reused verbatim. Requires get/set permission on both vaults.
+#### 9.3 Provision the stack (green-field overrides)
 
-#### 9.4 Update GitHub OAuth + public URL
+Deploy `main.bicep` with two overrides that keep the new app **off the shared domain** during blue/green:
+- `deployCustomDomainCerts=false` — the `vulncopilot.org` managed cert can't issue until the hostname is bound to the new app and DNS resolves to it (still the old app). Leaving it on **fails** the deploy.
+- `publicUrl=''` — falls back to `https://app-vulncopilot-dev.azurewebsites.net`, keeping the OAuth `redirect_uri` on the new app.
 
-- [ ] Add the new callback to the GitHub OAuth App: `https://app-vulncopilot-dev.azurewebsites.net/auth/oauth/github/callback` (keep the old one until cutover).
-- [ ] Confirm `CHAINLIT_URL` on the new App Service resolves to the new host (it's derived in bicep — verify).
-- [ ] Custom domain `vulncopilot.org`: bind + managed cert per [custom-domain-cloudflare.md](custom-domain-cloudflare.md) when ready (can follow validation).
+```bash
+az deployment group create -g rg-vulncopilot-dev -n vulncopilot-provision \
+  --template-file infra/main.bicep \
+  --parameters infra/parameters.dev.bicepparam \
+  --parameters pipelineServicePrincipalObjectId="$SP_OID" \
+               deployCustomDomainCerts=false publicUrl=''
+```
 
-#### 9.5 Azure DevOps wiring
+The **pipeline** (9.5) redeploys the same bicep from the committed `parameters.dev.bicepparam` *without* CLI overrides, so also commit these two values to the **branch** param file (certs off, `publicUrl=''`). **⚠️ This toggle must be reverted at cutover (9.6)**, or `main` ships with the domain disabled.
 
-Create *new* alongside the old (see [deploy-azure-app-service.md](../docs/deploy-azure-app-service.md), now renamed):
+Validate: all resources present incl. `job-vulncopilot-etl-dev`; `curl .../healthz` → 200; `CHAINLIT_URL` = the azurewebsites host.
 
-- [ ] Service connections `azure-vulncopilot` (ARM, scoped to `rg-vulncopilot-dev`) and `github-vulncopilot`.
-- [ ] Environment `vulncopilot-dev`.
-- [ ] Point the pipeline at `azure-pipelines.yml` on `main`; run it to validate the full build→push→deploy path against the new stack.
+#### 9.4 Repoint the GitHub OAuth callback
 
-#### 9.6 Validate, then tear down the old stack
+The new app reuses the **same** OAuth App (client id/secret copied in 9.2). A classic OAuth App has a **single** callback URL, so old and new hosts can't both work at once. Repoint it to the new host for validation:
+```
+https://app-vulncopilot-dev.azurewebsites.net/auth/oauth/github/callback
+```
+Old-app login breaks until cutover (fine for a single dev user); at cutover it becomes `https://vulncopilot.org/auth/oauth/github/callback`. (Alternative: a second OAuth App for the new stack — avoids old-app disruption but adds an app + new vault client id/secret.)
 
-- [ ] `curl https://app-vulncopilot-dev.azurewebsites.net/healthz`
-- [ ] GitHub OAuth login round-trip
-- [ ] `/mcp` endpoint responds; a sample vulnerability query returns data
-- [ ] ETL job (`job-vulncopilot-etl-dev`) triggers cleanly
-- [ ] Only after all green: delete the old stack
+#### 9.5 ADO pipeline wiring + validation run
+
+- [ ] Push the branch (incl. the 9.3 param toggle) to GitHub — the pipeline checks out from origin.
+- [ ] New pipeline → GitHub → repo `jeffhoek/vulncopilot` → existing YAML, branch `rename-to-vulncopilot`, path **`azure-pipelines.yml`** (`.yml`, not `.yaml`).
+- [ ] Set pipeline variable **`PIPELINE_SP_OBJECT_ID = $SP_OID`** — **required**; if unset it passes literally to the bicep and DeployInfra fails. (`ETL_EMAIL_TO` / `ADMIN_USER_IDENTIFIERS` optional; they default safely.)
+- [ ] Run manually against `rename-to-vulncopilot` — the trigger is `main`-only + `pr: none`, so it won't auto-fire (manual run is expected and matches merge-last). The `vulncopilot-dev` environment auto-creates on first run.
+
+The `github-vulncopilot` variable in the YAML is **unused** (`checkout: self` uses the pipeline's own GitHub connection) — no need to create that connection. Green = Build pushes `vulncopilot:<sha>`+`latest`; DeployInfra bicep succeeds (SP has Owner); DeployApp sets the `:<sha>` image and healthz passes.
+
+#### 9.6 Cutover + tear down the old stack
+
+Final validation on the new app:
+- [ ] OAuth login round-trip; a sample KEV/NVD query returns data; `/mcp` responds
+- [ ] optionally trigger the ETL job once: `az containerapp job start -n job-vulncopilot-etl-dev -g rg-vulncopilot-dev`
+
+Domain cutover:
+- [ ] Repoint `vulncopilot.org` DNS from the old app to the new app; add the hostname binding on `app-vulncopilot-dev`.
+- [ ] **Flip the 9.3 toggle back**: `deployCustomDomainCerts=true`, `publicUrl='https://vulncopilot.org'` in the branch param file; redeploy so the managed cert issues.
+- [ ] Update the OAuth callback to `https://vulncopilot.org/auth/oauth/github/callback`.
+
+Switch-flip and teardown:
+- [ ] Merge `rename-to-vulncopilot` → `main`; repoint the pipeline default branch to `main`.
+- [ ] Only after the new stack is fully green: delete the old stack and old wiring:
   ```bash
   az group delete --name rg-chainlit-rag-dev --yes --no-wait
   ```
-  and remove the old ADO service connections / environment / pipeline, and the old GitHub OAuth callback.
+  plus the old ADO service connection/environment/pipeline and the stale OAuth callback.
 
 **Notes**
 - Feature branches `ado-pipeline-fix`, `deploy-config-pipeline-vars`, `fix-pipeline-ui-var-override`, `harden-pipeline-deploy-vars` touch this area — if merged later, they inherit the new names from `main`.
