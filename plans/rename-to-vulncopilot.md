@@ -148,19 +148,90 @@ git push --force-with-lease
 
 Use `--force-with-lease` (not `--force`) to avoid clobbering any updates.
 
-### 9. Azure DevOps automation
+### 9. Azure App Service redeploy (blue/green)
 
-Separate from the in-repo `azure-pipelines.yml` updates in step 6, the Azure DevOps side likely needs attention too:
+**Scope**: Azure App Service **dev** only. EKS and GCP Cloud Run are untouched by this step — no namespace/SSM changes needed here (handle the EKS `/rag/*` rename separately if/when desired).
 
-- [ ] **Azure DevOps repo mirror / connection** — if ADO pulls from GitHub via a service connection, the connection may reference the old repo URL. Update the service connection or re-authorize against the new URL.
-- [ ] **Pipeline definitions** — the pipeline itself may be named after the old repo. Rename in ADO UI (Pipelines → ⋯ → Rename).
-- [ ] **Variable groups / library** — check for any variable group names or values that hardcode the old repo name.
-- [ ] **Environment names** — deployment environments (e.g. `chainlit-pydanticai-postgres-prod`) may need renaming.
-- [ ] **Artifact / container registry names** — if ADO publishes images or artifacts named after the repo (e.g. ACR image `chainlit-pydanticai-postgres:latest`), decide whether to rename or leave as-is. Renaming is cleaner but breaks pull references in deployed environments — coordinate with any running deployments.
-- [ ] **Webhook / trigger config** — GitHub redirects webhook payloads, but ADO may have cached the old URL in the trigger config. Verify a build fires after a push to the renamed repo.
-- [ ] **Related feature branches** — `ado-pipeline-fix`, `deploy-config-pipeline-vars`, `fix-pipeline-ui-var-override`, `harden-pipeline-deploy-vars` all touch this area; if any get merged later, they may need the same rename treatment.
+Rather than rename live Azure resources (RGs, ACR, and the App Service hostname **cannot** be renamed in place), stand up a fresh `vulncopilot` stack from the renamed IaC, validate it, then delete the old `chainlit-rag` stack. Every globally-unique name differs (`*-chainlit-rag-*` → `*-vulncopilot-*`), so the two stacks coexist and the old one stays as a rollback until cutover.
 
-Test the full pipeline end-to-end after the rename by pushing a small no-op commit.
+**Safe because**: the database is **external (Supabase)** — the bicep only references `database-url` / `database-url-readonly` from Key Vault, so nothing here touches the KEV/NVD/pgvector data. No ETL reload required.
+
+Old → new resource names (from the renamed IaC):
+
+| | Old | New |
+|---|---|---|
+| Resource group | `rg-chainlit-rag-dev` | `rg-vulncopilot-dev` |
+| Container registry | `acrchainlitragdev` | `acrvulncopilotdev` |
+| ACR image | `chainlit-pydanticai-rag:latest` | `vulncopilot:latest` |
+| App Service | `app-chainlit-rag-dev` | `app-vulncopilot-dev` |
+| Key Vault | `kv-chainlit-rag-dev` | `kv-vulncopilot-dev` |
+| ADO service connections | `azure-chainlit-rag`, `github-chainlit-rag` | `azure-vulncopilot`, `github-vulncopilot` |
+| ADO environment | `chainlit-rag-dev` | `vulncopilot-dev` |
+
+#### 9.1 Provision the new stack from renamed bicep
+
+Deploy `infra/main.bicep` + `infra/parameters.dev.bicepparam` (creates `rg-vulncopilot-dev`, `acrvulncopilotdev`, `kv-vulncopilot-dev`, `id-vulncopilot-dev`, `asp-vulncopilot-dev`, `app-vulncopilot-dev`, `log-vulncopilot-dev`). The App Service will fail to pull its image until 9.2 — expected.
+
+#### 9.2 Pre-seed the new registry with the known-good image
+
+Copy the existing artifact so the first deploy pulls something already validated (no dependency on a fresh build):
+
+```bash
+az acr import \
+  --name acrvulncopilotdev \
+  --source acrchainlitragdev.azurecr.io/chainlit-pydanticai-rag:latest \
+  --image vulncopilot:latest
+```
+
+Then restart the App Service so it pulls `acrvulncopilotdev.azurecr.io/vulncopilot:latest`. CI will rebuild under the new name on the next push.
+
+#### 9.3 Recreate Key Vault secrets
+
+Copy every secret from the old vault to the new one (values never printed):
+
+```bash
+OLD_KV=kv-chainlit-rag-dev
+NEW_KV=kv-vulncopilot-dev
+for s in database-url database-url-readonly anthropic-api-key openai-api-key \
+         oauth-github-client-id oauth-github-client-secret admin-secret \
+         nvd-api-key chainlit-auth-secret; do
+  v=$(az keyvault secret show --vault-name "$OLD_KV" --name "$s" --query value -o tsv)
+  az keyvault secret set --vault-name "$NEW_KV" --name "$s" --value "$v" >/dev/null
+  echo "copied: $s"
+done
+```
+
+`database-url*` point at Supabase and are reused verbatim. Requires get/set permission on both vaults.
+
+#### 9.4 Update GitHub OAuth + public URL
+
+- [ ] Add the new callback to the GitHub OAuth App: `https://app-vulncopilot-dev.azurewebsites.net/auth/oauth/github/callback` (keep the old one until cutover).
+- [ ] Confirm `CHAINLIT_URL` on the new App Service resolves to the new host (it's derived in bicep — verify).
+- [ ] Custom domain `vulncopilot.org`: bind + managed cert per [custom-domain-cloudflare.md](custom-domain-cloudflare.md) when ready (can follow validation).
+
+#### 9.5 Azure DevOps wiring
+
+Create *new* alongside the old (see [deploy-azure-app-service.md](../docs/deploy-azure-app-service.md), now renamed):
+
+- [ ] Service connections `azure-vulncopilot` (ARM, scoped to `rg-vulncopilot-dev`) and `github-vulncopilot`.
+- [ ] Environment `vulncopilot-dev`.
+- [ ] Point the pipeline at `azure-pipelines.yml` on `main`; run it to validate the full build→push→deploy path against the new stack.
+
+#### 9.6 Validate, then tear down the old stack
+
+- [ ] `curl https://app-vulncopilot-dev.azurewebsites.net/healthz`
+- [ ] GitHub OAuth login round-trip
+- [ ] `/mcp` endpoint responds; a sample vulnerability query returns data
+- [ ] ETL job (`job-vulncopilot-etl-dev`) triggers cleanly
+- [ ] Only after all green: delete the old stack
+  ```bash
+  az group delete --name rg-chainlit-rag-dev --yes --no-wait
+  ```
+  and remove the old ADO service connections / environment / pipeline, and the old GitHub OAuth callback.
+
+**Notes**
+- Feature branches `ado-pipeline-fix`, `deploy-config-pipeline-vars`, `fix-pipeline-ui-var-override`, `harden-pipeline-deploy-vars` touch this area — if merged later, they inherit the new names from `main`.
+- Skipping step 8 only defers it: merging this rename to `main` conflicts PRs #28/#45/#65, which still need rebasing before they can merge.
 
 ### 10. External references
 
