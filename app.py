@@ -111,8 +111,18 @@ def oauth_callback(provider_id, token, raw_user_data, default_user):
     return None  # deny
 
 
-def _quick_query_actions() -> list[cl.Action]:
-    return [cl.Action(name="quick_query", label=label, payload={"query": label}) for label in settings.action_buttons]
+async def _show_quick_queries() -> None:
+    """Render the quick-query buttons once into the fixed element sidebar.
+
+    Replaces attaching actions to every assistant message: the buttons live in a
+    persistent side panel instead of repeating inline each turn. No-op when no
+    buttons are configured, which also leaves the sidebar closed.
+    """
+    if not settings.action_buttons:
+        return
+    element = cl.CustomElement(name="QuickQueries", props={"queries": settings.action_buttons})
+    await cl.ElementSidebar.set_title("Quick queries")
+    await cl.ElementSidebar.set_elements([element], key="quick_queries")
 
 
 def _limit_for(user_id: str) -> int:
@@ -183,7 +193,7 @@ async def on_quick_query(action: cl.Action) -> None:
     if not await record_usage(result):
         return
     cl.user_session.set("message_history", result.all_messages()[-settings.max_history_messages :])
-    await cl.Message(content=result.output, actions=_quick_query_actions()).send()
+    await cl.Message(content=result.output).send()
 
 
 @cl.on_chat_start
@@ -197,12 +207,13 @@ async def on_chat_start() -> None:
     existing_history = cl.user_session.get("message_history")
     cl.user_session.set("deps", deps)
 
+    await _show_quick_queries()
+
     if existing_history is None:
         cl.user_session.set("message_history", [])
         doc_count = await vector_store.get_document_count()
         await cl.Message(
             content=f"Ready! {doc_count} vulnerability records available.",
-            actions=_quick_query_actions(),
         ).send()
     else:
         cl.user_session.set("message_history", existing_history)
@@ -224,4 +235,4 @@ async def on_message(message: cl.Message) -> None:
     if not await record_usage(result):
         return
     cl.user_session.set("message_history", result.all_messages()[-settings.max_history_messages :])
-    await cl.Message(content=result.output, actions=_quick_query_actions()).send()
+    await cl.Message(content=result.output).send()
