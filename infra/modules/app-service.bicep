@@ -101,6 +101,15 @@ var actionButtons = join([
   'Which weakness types appear most in KEV?'
 ], '","')
 
+// FastMCP 3.x enables DNS-rebinding Host validation by default and only allows
+// localhost, so every authenticated /mcp request to a public host returns 421
+// Misdirected Request unless the host is allow-listed (see docs/mcp-server.md).
+// Bare host (scheme/path stripped) of publicUrl, plus its www. variant.
+var publicHost = replace(replace(publicUrl, 'https://', ''), 'http://', '')
+var mcpAllowedHosts = empty(publicUrl)
+  ? '["${appServiceName}.azurewebsites.net"]'
+  : '["${appServiceName}.azurewebsites.net","${publicHost}","www.${publicHost}"]'
+
 resource appServicePlan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: appServicePlanName
   location: location
@@ -228,6 +237,12 @@ resource appService 'Microsoft.Web/sites@2023-12-01' = {
         {
           name: 'MCP_API_KEY'
           value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=mcp-api-key)'
+        }
+        {
+          // Allow-list the public hostname(s) for FastMCP's Host guard; without
+          // this, authenticated /mcp requests return 421 (see mcpAllowedHosts above).
+          name: 'FASTMCP_HTTP_ALLOWED_HOSTS'
+          value: mcpAllowedHosts
         }
         {
           name: 'LOGFIRE_ENABLED'

@@ -10,6 +10,10 @@ data:
   # GitHub rejects the mismatch. The GitHub OAuth App's callback must be
   # <CHAINLIT_URL>/auth/oauth/github/callback. See docs/public-access-setup.md.
   CHAINLIT_URL: "https://rag.manheok.com"
+  # FastMCP 3.x enables DNS-rebinding Host validation by default (localhost only),
+  # so authenticated /mcp requests to the public host return 421 Misdirected
+  # Request unless the ingress host is allow-listed here. See docs/mcp-server.md.
+  FASTMCP_HTTP_ALLOWED_HOSTS: '["rag.manheok.com"]'
   # Authorization allow-list (JSON arrays). A user is admitted if any match.
   ALLOWED_LOGINS: '["jeffhoek"]'   # GitHub usernames admitted to the app
   # ALLOWED_EMAILS: '[]'      # explicit emails
