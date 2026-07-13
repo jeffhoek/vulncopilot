@@ -19,10 +19,10 @@ echo "Account: $ACCOUNT_ID  Region: $REGION  Cluster: $CLUSTER"
 
 - [ ] **ECR repo exists** (runbook Step 1)
   ```bash
-  aws ecr describe-repositories --repository-names chainlit-pydanticai-rag --region $REGION \
+  aws ecr describe-repositories --repository-names vulncopilot --region $REGION \
     --query 'repositories[0].repositoryUri' --output text
   ```
-  Missing → `aws ecr create-repository --repository-name chainlit-pydanticai-rag --region $REGION`
+  Missing → `aws ecr create-repository --repository-name vulncopilot --region $REGION`
 
 - [ ] **GitHub OIDC provider exists** (Step 2)
   ```bash
@@ -31,30 +31,30 @@ echo "Account: $ACCOUNT_ID  Region: $REGION  Cluster: $CLUSTER"
 
 - [ ] **Deploy role trust policy points at the *real* repo** (Step 3) — ⚠️ the gotcha
   ```bash
-  aws iam get-role --role-name github-actions-chainlit-rag \
+  aws iam get-role --role-name github-actions-vulncopilot \
     --query 'Role.AssumeRolePolicyDocument' --output json
   ```
-  The `sub` must read **`repo:jeffhoek/chainlit-pydanticai-postgres:*`** (not `...-rag`).
+  The `sub` must read **`repo:jeffhoek/vulncopilot:*`** (not `...-rag`).
   Fix → edit `/tmp/trust-policy.json`, then
-  `aws iam update-assume-role-policy --role-name github-actions-chainlit-rag --policy-document file:///tmp/trust-policy.json`
+  `aws iam update-assume-role-policy --role-name github-actions-vulncopilot --policy-document file:///tmp/trust-policy.json`
 
 - [ ] **Deploy role has ECR + EKS-describe permissions** (Step 4)
   ```bash
-  aws iam list-attached-role-policies --role-name github-actions-chainlit-rag
-  aws iam list-role-policies --role-name github-actions-chainlit-rag
+  aws iam list-attached-role-policies --role-name github-actions-vulncopilot
+  aws iam list-role-policies --role-name github-actions-vulncopilot
   ```
 
 - [ ] **`AWS_DEPLOY_ROLE_ARN` GitHub secret is set** (Step 2) — was missing last check
   ```bash
-  gh secret list --repo jeffhoek/chainlit-pydanticai-postgres | grep AWS_DEPLOY_ROLE_ARN
+  gh secret list --repo jeffhoek/vulncopilot | grep AWS_DEPLOY_ROLE_ARN
   ```
   Missing →
   ```bash
-  gh secret set AWS_DEPLOY_ROLE_ARN --repo jeffhoek/chainlit-pydanticai-postgres \
-    --body "arn:aws:iam::${ACCOUNT_ID}:role/github-actions-chainlit-rag"
+  gh secret set AWS_DEPLOY_ROLE_ARN --repo jeffhoek/vulncopilot \
+    --body "arn:aws:iam::${ACCOUNT_ID}:role/github-actions-vulncopilot"
   ```
 
-> **No S3 IAM role.** The old `chainlit-rag-s3` role + Pod Identity association +
+> **No S3 IAM role.** The old `vulncopilot-s3` role + Pod Identity association +
 > `eks-pod-identity-agent` addon are no longer used. If they linger from a prior
 > deploy you can delete them, but they're harmless.
 
@@ -71,7 +71,7 @@ echo "Account: $ACCOUNT_ID  Region: $REGION  Cluster: $CLUSTER"
 - [ ] **Step 5 — Map the deploy role into `myeks` aws-auth** (so GH Actions `kubectl` works)
   ```bash
   eksctl create iamidentitymapping --cluster $CLUSTER --region $REGION \
-    --arn arn:aws:iam::${ACCOUNT_ID}:role/github-actions-chainlit-rag \
+    --arn arn:aws:iam::${ACCOUNT_ID}:role/github-actions-vulncopilot \
     --username github-actions --group system:masters
   eksctl get iamidentitymapping --cluster $CLUSTER --region $REGION   # verify
   ```
@@ -159,7 +159,7 @@ echo "Account: $ACCOUNT_ID  Region: $REGION  Cluster: $CLUSTER"
 - [ ] **Watch rollout** (startup is fast now — just a DB connection)
   ```bash
   kubectl get pods -n rag -w
-  kubectl logs -n rag deploy/chainlit-rag --follow
+  kubectl logs -n rag deploy/vulncopilot --follow
   kubectl get ingress -n rag                 # grab the ALB hostname from ADDRESS
   ```
 

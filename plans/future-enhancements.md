@@ -13,20 +13,20 @@ Shipped section at the top records items that have graduated into production.
 Items that have graduated from this list into production. Kept here briefly for
 context on what the remaining work builds on.
 
-### Per-User GitHub OAuth ✅ *(PRs [#85](https://github.com/jeffhoek/chainlit-pydanticai-postgres/pull/85), [#86](https://github.com/jeffhoek/chainlit-pydanticai-postgres/pull/86))*
+### Per-User GitHub OAuth ✅ *(PRs [#85](https://github.com/jeffhoek/vulncopilot/pull/85), [#86](https://github.com/jeffhoek/vulncopilot/pull/86))*
 
 Replaced the single shared username/password with per-user GitHub OAuth and a
 login allow-list, so access is tied to real identities. This is the identity
 foundation the remaining Role-Based Access Control work (tiered permissions,
 below) builds on. See [public-access-plan.md](public-access-plan.md).
 
-### Per-User Daily Rate Limiting ✅ *(PR [#88](https://github.com/jeffhoek/chainlit-pydanticai-postgres/pull/88))*
+### Per-User Daily Rate Limiting ✅ *(PR [#88](https://github.com/jeffhoek/vulncopilot/pull/88))*
 
 Atomic per-user daily query caps tracked in Postgres (`user_usage`), with an
 elevated limit override for admins. Closes the public-abuse window that OAuth
 alone left open.
 
-### Admin Usage & Cost Dashboard ✅ *(PR [#91](https://github.com/jeffhoek/chainlit-pydanticai-postgres/pull/91))*
+### Admin Usage & Cost Dashboard ✅ *(PR [#91](https://github.com/jeffhoek/vulncopilot/pull/91))*
 
 A `/admin` page (HTTP Basic Auth) showing per-user query volume, token usage,
 and estimated LLM cost. Partially satisfies **Cost Tracking** below — the
@@ -35,7 +35,7 @@ remaining gap is per-query attribution rather than per-user/day aggregates.
 ### Automated ETL Scheduling ✅
 
 KEV and NVD loaders now run unattended on a cron schedule via an **Azure
-Container Apps Job** (`job-chainlit-rag-etl-<env>`), reusing the app image and
+Container Apps Job** (`job-vulncopilot-etl-<env>`), reusing the app image and
 pulling secrets from Key Vault via managed identity. Cadence is set by
 `etlCronExpression` in `infra/parameters.dev.bicepparam`. See
 [Scheduled ETL Refresh](../docs/deploy-azure-app-service.md#scheduled-etl-refresh-container-apps-job).
@@ -161,7 +161,7 @@ Risk Score (rank what's worth patching first).
 Subscribe to alerts when new KEV entries match specific criteria such as vendor,
 product, or severity threshold.
 
-### Evaluation Framework *(in flight: PR [#65](https://github.com/jeffhoek/chainlit-pydanticai-postgres/pull/65))*
+### Evaluation Framework *(in flight: PR [#65](https://github.com/jeffhoek/vulncopilot/pull/65))*
 
 Build a test suite of question/answer pairs to systematically measure and track
 retrieval quality and agent accuracy over time. Approach in two phases:

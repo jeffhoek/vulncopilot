@@ -77,7 +77,7 @@ Both tables also have `content` (text for display) and `embedding` (vector for s
 ## Database Backup
 Take a `pg_dump` backup using the following:
 ```
-podman exec chainlit-pydanticai-rag-pg-pgvector-1 pg_dump -U postgresuser inventory > backup.sql
+podman exec vulncopilot-pg-pgvector-1 pg_dump -U postgresuser inventory > backup.sql
 ```
 
 ## Example Queries

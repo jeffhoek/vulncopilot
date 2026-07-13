@@ -1,7 +1,7 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: chainlit-rag
+  name: vulncopilot
   namespace: rag
   annotations:
     # Internet-facing ALB with IP target type (routes directly to pod IPs)
@@ -27,6 +27,6 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: chainlit-rag
+                name: vulncopilot
                 port:
                   number: 80

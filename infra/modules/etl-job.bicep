@@ -29,7 +29,7 @@ param replicaTimeout int = 7200
 
 param tags object = {}
 
-var imageRef = '${acrLoginServer}/chainlit-pydanticai-rag:latest'
+var imageRef = '${acrLoginServer}/vulncopilot:latest'
 var kvBase = 'https://${keyVaultName}${environment().suffixes.keyvaultDns}/secrets'
 
 // run_etl.py runs the loaders in the correct order (full NVD incremental FIRST so

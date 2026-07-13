@@ -1,7 +1,7 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: chainlit-rag-restrict-egress
+  name: vulncopilot-restrict-egress
   namespace: rag
 spec:
   podSelector: {}

@@ -1,5 +1,5 @@
 [project]
-name = "rag-chatbot"
+name = "vulncopilot"
 version = "0.1.0"
 description = "A retrieval-augmented generation chatbot built with Pydantic AI and Chainlit. Uses PostgreSQL with pgvector for persistent vector storage of CISA KEV data."
 readme = "README.md"
@@ -23,6 +23,10 @@ dependencies = [
     "azure-communication-email>=1.0.0",
     "jinja2>=3.1.6",
 ]
+
+[project.urls]
+Homepage = "https://vulncopilot.org"
+Repository = "https://github.com/jeffhoek/vulncopilot"
 
 [dependency-groups]
 dev = [

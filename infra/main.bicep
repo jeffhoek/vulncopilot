@@ -45,7 +45,7 @@ param customDomain string = ''
 @description('Issue managed certificates for the custom domain. Keep false until DNS + hostname binding exist for the environment.')
 param deployCustomDomainCerts bool = false
 
-var appName = 'chainlit-rag'
+var appName = 'vulncopilot'
 var tags = {
   environment: environment
   application: appName

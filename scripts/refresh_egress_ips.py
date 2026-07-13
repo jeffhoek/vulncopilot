@@ -68,7 +68,7 @@ def render(ips: dict[str, list[str]], github: list[str]) -> str:
     return f"""apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: chainlit-rag-restrict-egress
+  name: vulncopilot-restrict-egress
   namespace: rag
 spec:
   podSelector: {{}}

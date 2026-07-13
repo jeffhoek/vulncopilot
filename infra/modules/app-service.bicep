@@ -31,7 +31,7 @@ param customDomain string = ''
 // to true only once DNS is live for the environment.
 param deployCustomDomainCerts bool = false
 
-var imageRef = '${acrLoginServer}/chainlit-pydanticai-rag:latest'
+var imageRef = '${acrLoginServer}/vulncopilot:latest'
 
 var systemPrompt = concat(
   'You are a security analyst assistant with access to the ',

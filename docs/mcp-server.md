@@ -45,7 +45,7 @@ produce artifacts, or run unattended.
 ## Endpoint
 
 ```
-https://app-chainlit-rag-dev.azurewebsites.net/mcp
+https://app-vulncopilot-dev.azurewebsites.net/mcp
 ```
 
 Transport: **Streamable HTTP** (MCP spec 2025-03-26+).
@@ -135,7 +135,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`
       "args": [
         "-y",
         "mcp-remote",
-        "https://app-chainlit-rag-dev.azurewebsites.net/mcp",
+        "https://app-vulncopilot-dev.azurewebsites.net/mcp",
         "--header",
         "X-API-Key:YOUR_MCP_API_KEY"
       ]
@@ -159,7 +159,7 @@ Claude Code supports HTTP MCP servers natively — no `mcp-remote` bridge needed
 Add via CLI (recommended):
 
 ```bash
-claude mcp add-json kev-nvd-rag '{"type":"http","url":"https://app-chainlit-rag-dev.azurewebsites.net/mcp","headers":{"X-API-Key":"YOUR_MCP_API_KEY"}}'
+claude mcp add-json kev-nvd-rag '{"type":"http","url":"https://app-vulncopilot-dev.azurewebsites.net/mcp","headers":{"X-API-Key":"YOUR_MCP_API_KEY"}}'
 ```
 
 Or add manually to `~/.claude/settings.json`:
@@ -169,7 +169,7 @@ Or add manually to `~/.claude/settings.json`:
   "mcpServers": {
     "kev-nvd-rag": {
       "type": "http",
-      "url": "https://app-chainlit-rag-dev.azurewebsites.net/mcp",
+      "url": "https://app-vulncopilot-dev.azurewebsites.net/mcp",
       "headers": {
         "X-API-Key": "YOUR_MCP_API_KEY"
       }
@@ -189,7 +189,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerHTTP
 
 mcp_server = MCPServerHTTP(
-    url="https://app-chainlit-rag-dev.azurewebsites.net/mcp",
+    url="https://app-vulncopilot-dev.azurewebsites.net/mcp",
     headers={"X-API-Key": "YOUR_MCP_API_KEY"},
 )
 
@@ -217,7 +217,7 @@ openssl rand -hex 32
 
 ```bash
 az keyvault secret set \
-  --vault-name kv-chainlit-rag-dev \
+  --vault-name kv-vulncopilot-dev \
   --name mcp-api-key \
   --value "YOUR_NEW_KEY"
 ```
