@@ -103,6 +103,31 @@ def extract_cvss_v2(metrics: dict) -> tuple:
     return None, None
 
 
+def extract_ssvc(metrics: dict) -> dict:
+    """Flatten CISA-ADP SSVC v2.0.3 factors into a dict of factor -> value.
+
+    SSVC is nested under ``metrics.ssvcV203`` (not a top-level CVE field). Each
+    entry's ``ssvcData.options`` is an array of single-key dicts, e.g.
+    ``[{"exploitation": "active"}, {"automatable": "yes"}, ...]``; they are merged
+    into one flat mapping. Returns ``{}`` when no SSVC block is present. The
+    rolled-up ``decision`` (Act/Attend/Track) is usually absent today — see plan.
+    """
+    for entry in metrics.get("ssvcV203", []):
+        data = entry.get("ssvcData", {})
+        opts: dict = {}
+        for o in data.get("options", []):
+            if isinstance(o, dict):
+                opts.update(o)
+        return {
+            "exploitation": opts.get("exploitation"),
+            "automatable": opts.get("automatable"),
+            "technical_impact": opts.get("technicalImpact"),
+            "decision": opts.get("decision"),  # usually absent today
+            "version": data.get("version"),
+        }
+    return {}
+
+
 def extract_cwes(weaknesses: list) -> list[str]:
     """Extract CWE IDs from weaknesses."""
     cwes = []

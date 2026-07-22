@@ -133,8 +133,18 @@ def extract_ssvc(metrics: dict) -> dict:
     return {}
 ```
 
-- Wire `extract_ssvc()` into `build_upsert_params()` ([scripts/load_nvd.py:145](scripts/load_nvd.py:145)) and `_prepare_row()` ([scripts/load_nvd_full.py:232](scripts/load_nvd_full.py:232)); extend both UPSERT statements and `STAGING_COLUMNS`.
-- **`build_content()`** ([scripts/nvd_utils.py:70](scripts/nvd_utils.py:70)): append SSVC factors and `affected` vendor/product names so semantic search surfaces them, e.g. `SSVC: exploitation=active, automatable=yes, technicalImpact=total` and `Affected: Apache Software Foundation Apache Log4j2`. This changes embedding inputs — see operational note on re-embedding.
+- Wire `extract_ssvc()` into `build_upsert_params()` ([scripts/load_nvd.py:145](scripts/load_nvd.py:145)) and `_prepare_row()` ([scripts/load_nvd_full.py:214](scripts/load_nvd_full.py:214)); extend both UPSERT statements and `STAGING_COLUMNS`.
+- **`build_content()`** ([scripts/nvd_utils.py:147](scripts/nvd_utils.py:147)): append SSVC factors and `affected` vendor/product names so semantic search surfaces them, e.g. `SSVC: exploitation=active, automatable=yes, technicalImpact=total` and `Affected: Apache Software Foundation Apache Log4j2`. This changes embedding inputs — see operational note on re-embedding.
+
+> **Chunk C is six coordinated edits, not one.** The `load_nvd_full.py` wiring is column-order-sensitive across six spots that must all stay aligned, or a bulk insert will silently shift values between columns:
+> 1. `STAGING_COLUMNS` list ([scripts/load_nvd_full.py:80](scripts/load_nvd_full.py:80))
+> 2. `CREATE_STAGING_SQL` temp-table DDL ([scripts/load_nvd_full.py:98](scripts/load_nvd_full.py:98))
+> 3. `UPSERT_FROM_STAGING_SQL` — the `INSERT (…)` column list ([scripts/load_nvd_full.py:118](scripts/load_nvd_full.py:118))
+> 4. same statement — the `SELECT …` column list
+> 5. same statement — the `ON CONFLICT DO UPDATE SET` assignments
+> 6. `_prepare_row()` return tuple ([scripts/load_nvd_full.py:214](scripts/load_nvd_full.py:214))
+>
+> Append the five SSVC columns in the **same order** in all six. Chunk D (`load_nvd.py`) is the smaller sibling: `build_upsert_params()` tuple + the single `UPSERT_SQL` string. Do C and D together, or column sets drift between the two loaders depending on which one ran.
 
 Optionally add an `extract_affected_named(cve.affected)` helper now (vendor/product strings) just for `build_content`, deferring dedicated columns to Tier 2.
 
@@ -191,7 +201,7 @@ Recommended sequence:
 ## 5. Sequencing & testing
 
 1. Schema migration + `extract_ssvc` + unit test against the verified fixture.
-2. Wire ETL upserts (both loaders) + `build_content` update.
+2. Wire ETL upserts (both loaders) + `build_content` update. **See the six-edit note in §2 — `load_nvd_full.py` alone is six column-order-aligned spots; do both loaders in one pass to avoid column drift.**
 3. `--backfill-ssvc` mode.
 4. System prompt + docs.
 5. Operational re-sync per section 4.
