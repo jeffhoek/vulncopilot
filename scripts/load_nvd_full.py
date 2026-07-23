@@ -9,6 +9,7 @@ Usage:
     uv run python scripts/load_nvd_full.py --incremental --since 2026-04-14  # Override start date
     uv run python scripts/load_nvd_full.py --skip-embeddings       # Data only, no embeddings
     uv run python scripts/load_nvd_full.py --backfill-embeddings   # Fill missing embeddings
+    uv run python scripts/load_nvd_full.py --backfill-ssvc         # Fill SSVC columns from raw_json
     uv run python scripts/load_nvd_full.py --limit 3               # Test with first 3 pages
 
 Incremental sync runs two phases: new CVEs (by published date) first, then all modified CVEs.
@@ -59,6 +60,7 @@ NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 RESULTS_PER_PAGE = 2000
 EMBEDDING_BATCH_SIZE = 500
 BACKFILL_BATCH_SIZE = 100
+SSVC_BACKFILL_BATCH_SIZE = 5000  # pure SQL/Python, no API — batches can be large
 CHECKPOINT_FILE = Path(__file__).resolve().parent.parent / "data" / "nvd_checkpoint.json"
 DB_RETRY_EXCEPTIONS = (
     ConnectionResetError,
@@ -701,6 +703,80 @@ async def backfill_embeddings() -> None:
     print(f"Done! Backfilled embeddings for {processed} records")
 
 
+async def backfill_ssvc() -> None:
+    """Populate the five SSVC columns from raw_json for already-synced rows.
+
+    Pure SQL/Python — no NVD API calls. Reads metrics.ssvcV203 out of raw_json
+    via extract_ssvc() and writes the typed columns. Idempotent and resumable:
+    keyset pagination over cve_id visits each SSVC-bearing row exactly once per
+    pass, so a row whose factors resolve to NULL can't cause a re-select loop.
+    """
+    dsn = settings.get_database_dsn()
+    conn = await asyncpg.connect(dsn=dsn, timeout=DB_CONNECT_TIMEOUT)
+    await conn.execute("SET statement_timeout = 0")
+    try:
+        total = await conn.fetchval(
+            "SELECT COUNT(*) FROM nvd_vulnerabilities WHERE raw_json->'metrics' ? 'ssvcV203'"
+        )
+        print(f"Found {total} records with SSVC data in raw_json")
+        if not total:
+            return
+
+        processed = 0
+        after = ""  # keyset cursor on cve_id ("" sorts before any real CVE ID)
+        while True:
+            rows = await conn.fetch(
+                """
+                SELECT cve_id, raw_json->'metrics' AS metrics
+                FROM nvd_vulnerabilities
+                WHERE raw_json->'metrics' ? 'ssvcV203' AND cve_id > $1
+                ORDER BY cve_id
+                LIMIT $2
+                """,
+                after,
+                SSVC_BACKFILL_BATCH_SIZE,
+            )
+            if not rows:
+                break
+
+            params = []
+            for row in rows:
+                metrics = row["metrics"]
+                if isinstance(metrics, str):  # asyncpg returns jsonb as text
+                    metrics = json.loads(metrics)
+                ssvc = extract_ssvc(metrics or {})
+                params.append(
+                    (
+                        row["cve_id"],
+                        ssvc.get("exploitation"),
+                        ssvc.get("automatable"),
+                        ssvc.get("technical_impact"),
+                        ssvc.get("decision"),
+                        ssvc.get("version"),
+                    )
+                )
+
+            await conn.executemany(
+                """
+                UPDATE nvd_vulnerabilities SET
+                    ssvc_exploitation = $2,
+                    ssvc_automatable = $3,
+                    ssvc_technical_impact = $4,
+                    ssvc_decision = $5,
+                    ssvc_version = $6
+                WHERE cve_id = $1
+                """,
+                params,
+            )
+            processed += len(rows)
+            after = rows[-1]["cve_id"]
+            print(f"  Backfilled {processed}/{total}")
+
+        print(f"Done! Backfilled SSVC columns for {processed} records")
+    finally:
+        await conn.close()
+
+
 # -- Entrypoint --
 
 
@@ -716,13 +792,20 @@ async def main() -> None:
     )
     parser.add_argument("--skip-embeddings", action="store_true", help="Load data without generating embeddings")
     parser.add_argument("--backfill-embeddings", action="store_true", help="Generate embeddings for rows missing them")
+    parser.add_argument(
+        "--backfill-ssvc",
+        action="store_true",
+        help="Populate SSVC columns from raw_json (pure SQL/Python, no API)",
+    )
     parser.add_argument("--limit", type=int, default=None, help="Limit to N pages (for testing)")
     args = parser.parse_args()
 
     rate_info = "with API key (50 req/30s)" if NVD_API_KEY else "without API key (5 req/30s)"
     print(f"NVD Full ETL | Rate limiting: {rate_info}")
 
-    if args.backfill_embeddings:
+    if args.backfill_ssvc:
+        await backfill_ssvc()
+    elif args.backfill_embeddings:
         await backfill_embeddings()
     elif args.incremental:
         await incremental_sync(since=args.since, skip_embeddings=args.skip_embeddings)
