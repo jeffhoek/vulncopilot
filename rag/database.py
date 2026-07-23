@@ -104,6 +104,19 @@ async def init_db() -> asyncpg.Pool:
     if _pool is not None:
         return _pool
 
+    # On a fresh database the `vector` type doesn't exist yet, so register_vector()
+    # (run by _init_connection on every pooled connection) would fail during pool
+    # creation. Create the extension first on a plain connection so the type exists
+    # before the pool opens. A read-only app role can't run DDL, so this is gated on
+    # db_init_schema just like the rest of SCHEMA_SQL below
+    # (see docs/supabase-readonly-role.md).
+    if settings.db_init_schema:
+        conn = await asyncpg.connect(dsn=settings.get_database_dsn())
+        try:
+            await conn.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+        finally:
+            await conn.close()
+
     _pool = await asyncpg.create_pool(
         dsn=settings.get_database_dsn(),
         min_size=2,
