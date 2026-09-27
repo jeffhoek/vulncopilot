@@ -370,3 +370,21 @@ def test_rationale_omits_the_ransomware_phrase_when_the_flag_is_unknown():
 def test_rationale_notes_an_unrated_weakness_class():
     text = build_rationale(make_row(c_cwe=Decimal("0.025"), cwe_top=None))
     assert "No rated weakness class" in text
+
+
+def test_view_ddl_revokes_the_refresh_function_from_the_data_api_roles():
+    # REVOKE ... FROM PUBLIC does not clear an explicit grant, and Supabase creates
+    # every function in `public` with EXECUTE already granted to anon/authenticated.
+    # Without this the linter keeps reporting the function as anon-executable — and it
+    # is SECURITY DEFINER wrapping an expensive CONCURRENTLY refresh.
+    ddl = view_ddl()
+    assert "REVOKE ALL ON FUNCTION refresh_v_cve_risk() FROM PUBLIC" in ddl
+    assert "REVOKE ALL ON FUNCTION refresh_v_cve_risk() FROM %s" in ddl
+
+
+def test_view_ddl_revoke_of_the_view_is_guarded_on_role_existence():
+    # `anon` exists only on Supabase; an unguarded REVOKE aborts the whole DDL on a
+    # local or CI database.
+    ddl = view_ddl()
+    assert "FROM pg_roles WHERE rolname IN ('anon', 'authenticated')" in ddl
+    assert ddl.index("IF api_roles IS NOT NULL THEN") < ddl.index("REVOKE ALL ON v_cve_risk FROM %s")

@@ -6,7 +6,7 @@ from rag.risk import view_ddl
 
 _pool: asyncpg.Pool | None = None
 
-SCHEMA_SQL = """
+_TABLES_SQL = """
 CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE IF NOT EXISTS kev_vulnerabilities (
@@ -182,6 +182,131 @@ CREATE INDEX IF NOT EXISTS user_usage_date_idx ON user_usage (query_date DESC);
 -- already creates a B-tree on both columns with user_identifier as the leading key, which
 -- PostgreSQL can use for single-column lookups on user_identifier.
 """
+
+# The tables this file creates. RLS_SQL does NOT read this list — it discovers tables
+# from pg_catalog at run time (see below) — so this is documentation plus the set the
+# tests assert on: a unit test keeps it in step with the CREATE TABLE statements above,
+# and the integration test checks these specific tables end up protected.
+RLS_TABLES: tuple[str, ...] = (
+    "kev_vulnerabilities",
+    "nvd_vulnerabilities",
+    "epss_scores",
+    "cwe_definitions",
+    "etl_runs",
+    "user_usage",
+)
+
+# Row-Level Security. See docs/supabase-rls.md.
+#
+# Supabase serves every table in `public` over the PostgREST Data API, where requests
+# arrive as the built-in `anon` / `authenticated` roles — and Supabase's own default
+# privileges grant those roles ALL on tables created here. RLS is therefore the only
+# thing standing between a leaked publishable key and full read/write on the corpus,
+# and its absence is what Supabase's linter reports as `rls_disabled_in_public`.
+#
+# Enabling it is not consequence-free: RLS applies to every role except the table
+# owner, so `app_readonly` and `app_etl` (docs/supabase-readonly-role.md) go from
+# working to silently returning zero rows the instant it is switched on. The policies
+# below restore exactly the access the GRANTs already describe. A policy filters rows,
+# it never confers a privilege, so `USING (true)` for both roles leaves the read-only
+# and no-DELETE posture of those roles fully intact.
+#
+# Split out from _TABLES_SQL so production can apply just this part with the admin
+# role (see docs/supabase-rls.md), the same way view_ddl() is applied.
+RLS_SQL = """
+DO $$
+DECLARE
+    tbl       text;
+    api_roles text;
+    app_roles text;
+    protected text[];
+BEGIN
+    -- Both role sets are resolved against pg_catalog first because none of them exist
+    -- on a local dev or CI database: `anon` and `authenticated` are created by
+    -- Supabase, `app_readonly` and `app_etl` by hand. REVOKE and CREATE POLICY have no
+    -- IF EXISTS, so unguarded statements would abort this whole file off-Supabase.
+    -- They are interpolated as a *list* rather than bound one at a time because
+    -- neither statement accepts a role parameter.
+    SELECT string_agg(quote_ident(rolname), ', ' ORDER BY rolname) INTO api_roles
+    FROM pg_roles WHERE rolname IN ('anon', 'authenticated');
+
+    SELECT string_agg(quote_ident(rolname), ', ' ORDER BY rolname) INTO app_roles
+    FROM pg_roles WHERE rolname IN ('app_readonly', 'app_etl');
+
+    -- Discovered from the catalog rather than hardcoded, because the linter fires on
+    -- whatever is actually in `public` — not on what this file created. Production had
+    -- picked up a `cve_references` table that exists in no migration here, and a fixed
+    -- list silently left it exposed. Anything created by hand later is now covered.
+    --
+    -- Two filters, both about ALTER TABLE requiring ownership: tables owned by another
+    -- role would raise "must be owner", and extension-owned tables (deptype 'e', e.g.
+    -- anything pgvector or postgres_fdw installs into public) are not ours to change.
+    SELECT array_agg(c.relname ORDER BY c.relname) INTO protected
+    FROM pg_class c
+    WHERE c.relnamespace = 'public'::regnamespace
+      AND c.relkind IN ('r', 'p')
+      AND pg_get_userbyid(c.relowner) = current_user
+      AND NOT EXISTS (
+          SELECT 1 FROM pg_depend d
+          WHERE d.classid = 'pg_class'::regclass
+            AND d.objid = c.oid
+            AND d.deptype = 'e'
+      );
+
+    -- COALESCE because array_agg returns NULL, not an empty array, when nothing
+    -- matches — and FOREACH over NULL raises. Folding it in here rather than taking an
+    -- early RETURN keeps the default-privilege revokes below reachable on a schema that
+    -- has no tables yet, which is exactly when setting those defaults matters most.
+    FOREACH tbl IN ARRAY COALESCE(protected, '{}'::text[]) LOOP
+        EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', tbl);
+
+        -- CREATE POLICY has neither OR REPLACE nor IF NOT EXISTS; dropping first is
+        -- what keeps this file replayable, which every other statement here relies on.
+        EXECUTE format('DROP POLICY IF EXISTS app_roles_rw ON %I', tbl);
+
+        IF app_roles IS NOT NULL THEN
+            EXECUTE format(
+                'CREATE POLICY app_roles_rw ON %I FOR ALL TO %s '
+                'USING (true) WITH CHECK (true)', tbl, app_roles);
+        END IF;
+
+        -- Defence in depth behind the policies: with no grant at all, a Data API
+        -- request never gets as far as the RLS check.
+        IF api_roles IS NOT NULL THEN
+            EXECUTE format('REVOKE ALL ON %I FROM %s', tbl, api_roles);
+        END IF;
+    END LOOP;
+
+    IF api_roles IS NOT NULL THEN
+        EXECUTE format(
+            'REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM %s', api_roles);
+
+        -- Supabase ships ALTER DEFAULT PRIVILEGES ... GRANT ALL ON TABLES TO anon,
+        -- authenticated. Without countermanding it, the next table added to
+        -- _TABLES_SQL arrives publicly readable again the moment it is created.
+        -- Scoped to the role running this, which is the admin role that owns every
+        -- object here — default privileges are per-creator, so that is the one that
+        -- matters.
+        EXECUTE format(
+            'ALTER DEFAULT PRIVILEGES IN SCHEMA public '
+            'REVOKE ALL ON TABLES FROM %s', api_roles);
+        EXECUTE format(
+            'ALTER DEFAULT PRIVILEGES IN SCHEMA public '
+            'REVOKE ALL ON SEQUENCES FROM %s', api_roles);
+
+        -- Supabase's default privileges cover FUNCTIONS too, and that one is not
+        -- cosmetic: `refresh_v_cve_risk()` (rag/risk.py) is SECURITY DEFINER, so a
+        -- function arriving with EXECUTE already granted to anon is an unauthenticated
+        -- caller running admin-privileged work. view_ddl() revokes it on the function
+        -- it creates; this stops the next one inheriting the grant in the first place.
+        EXECUTE format(
+            'ALTER DEFAULT PRIVILEGES IN SCHEMA public '
+            'REVOKE ALL ON FUNCTIONS FROM %s', api_roles);
+    END IF;
+END $$;
+"""
+
+SCHEMA_SQL = _TABLES_SQL + RLS_SQL
 
 
 async def _init_connection(conn: asyncpg.Connection) -> None:
