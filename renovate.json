@@ -13,7 +13,8 @@
       "matchUpdateTypes": [
         "major"
       ],
-      "minimumReleaseAge": "30 days"
+      "minimumReleaseAge": "30 days",
+      "dependencyDashboardApproval": true
     }
   ]
 }
